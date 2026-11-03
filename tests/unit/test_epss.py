@@ -1,0 +1,116 @@
+import gzip
+from datetime import date
+
+import pytest
+
+from threatflow.ingestion.epss_client import ARCHIVE_URL, EpssClient
+from threatflow.ingestion.epss_parser import parse_dataset
+from threatflow.raw_storage import store_raw_artifact
+
+
+def gz(text):
+    return gzip.compress(text.encode())
+
+
+def test_historical_url_and_date_validation(monkeypatch):
+    seen = []
+
+    class Response:
+        content = gz("cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n")
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(
+        "threatflow.ingestion.epss_client.httpx.get",
+        lambda url, **kw: seen.append(url) or Response(),
+    )
+    assert EpssClient().fetch(date(2024, 12, 21)) == Response.content
+    assert seen[0] == ARCHIVE_URL.format(year=2024, date="2024-12-21")
+    with pytest.raises(ValueError):
+        EpssClient().fetch(date(2020, 1, 1))
+
+
+def test_parse_validation_and_exact_raw_bytes(tmp_path):
+    raw = gz(
+        "#model_version:v1,score_date:2024-01-01T00:00:00Z\ncve,epss,percentile\nCVE-2024-1234,0.1,0.2\n"
+    )
+    rows = parse_dataset(raw, date(2024, 1, 1))
+    assert rows[0]["epss_score"] == 0.1
+    stored = store_raw_artifact(
+        "epss", raw, __import__("datetime").datetime.now(), ".csv.gz", raw_data_dir=tmp_path
+    )
+    assert stored.path.read_bytes() == raw
+
+
+def test_reject_invalid_or_duplicate_rows():
+    with pytest.raises(ValueError):
+        parse_dataset(gz("cve,epss,percentile\nwrong,0.1,0.2"), date.today())
+    with pytest.raises(ValueError):
+        parse_dataset(gz("cve,epss,percentile\nCVE-2024-1234,2,0.2"), date.today())
+    with pytest.raises(ValueError):
+        parse_dataset(
+            gz("cve,epss,percentile\nCVE-2024-1234,.1,.2\nCVE-2024-1234,.1,.2"), date.today()
+        )
+
+
+def test_missing_columns_empty_truncated_and_invalid_percentile():
+    for content in [
+        gz("cve,epss\nCVE-2024-1234,0.1"),
+        gz("cve,epss,percentile\n"),
+        gz("cve,epss,percentile\nCVE-2024-1234,0.1,2"),
+        gz("cve,epss,percentile\nCVE-2024-1234,0.1,not-a-number"),
+        gz("cve,epss,percentile\nCVE-2024-1234,0.1,0.2")[:-3],
+    ]:
+        with pytest.raises(ValueError):
+            parse_dataset(content, date(2024, 1, 1))
+
+
+def test_client_retries_429_and_stops_at_limit(monkeypatch):
+    import httpx
+
+    calls, sleeps = [], []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            return httpx.Response(
+                429, headers={"Retry-After": "2"}, request=httpx.Request("GET", url)
+            )
+        return httpx.Response(
+            200,
+            content=gz("cve,epss,percentile\nCVE-2024-1234,.1,.2"),
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("threatflow.ingestion.epss_client.httpx.get", get)
+    EpssClient(retries=1, sleep=sleeps.append).fetch()
+    assert len(calls) == 2 and sleeps == [2]
+    monkeypatch.setattr(
+        "threatflow.ingestion.epss_client.httpx.get",
+        lambda url, **kw: httpx.Response(404, request=httpx.Request("GET", url)),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        EpssClient(retries=3, sleep=sleeps.append).fetch(date(2024, 1, 1))
+
+
+def test_historical_metadata_mismatch_is_rejected():
+    content = gz(
+        "#model_version:v2023.03.01,score_date:2024-12-20T00:00:00Z\n"
+        "cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n"
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        parse_dataset(content, date(2024, 12, 21))
+
+
+def test_current_ingestion_requires_metadata_and_preserves_raw(tmp_path):
+    from threatflow.config import Settings
+    from threatflow.ingestion.epss_ingestion import ingest_epss
+
+    class Client:
+        def fetch(self, score_date):
+            return gz("cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n")
+
+    with pytest.raises(ValueError, match="no authoritative score_date"):
+        ingest_epss(client=Client(), settings=Settings(raw_data_dir=str(tmp_path)))
+    assert list(tmp_path.rglob("*.csv.gz"))

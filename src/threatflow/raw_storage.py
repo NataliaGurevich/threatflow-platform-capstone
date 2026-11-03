@@ -12,7 +12,7 @@ from pathlib import Path
 
 from threatflow.config import Settings
 
-_SOURCE_EXTENSIONS = {"cisa_kev": {"json"}, "nvd": {"json"}, "epss": {"csv"}}
+_SOURCE_EXTENSIONS = {"cisa_kev": {"json"}, "nvd": {"json"}, "epss": {"csv", "csv.gz"}}
 _SAFE_SOURCE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
