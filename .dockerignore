@@ -1,0 +1,47 @@
+# Git
+.git/
+.gitignore
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# dbt
+dbt_packages/
+target/
+logs/
+
+# Airflow logs
+airflow/logs/
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+
+# Documentation / temporary files
+*.md
+*.tmp
+*.swp
+
+# Agent
+AGENTS.md
