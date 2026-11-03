@@ -54,6 +54,20 @@ def test_reject_invalid_or_duplicate_rows():
         )
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "cve,epss,percentile\nCVE-2024-1234,0.1,0.2,extra\n",
+        "cve,epss,percentile\nCVE-2024-1234,0.1\n",
+        "cve,epss,epss,percentile\nCVE-2024-1234,bad,0.1,0.2\n",
+        "cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n#bad,row,data\n",
+    ],
+)
+def test_reject_malformed_csv_structure(body):
+    with pytest.raises(ValueError):
+        parse_dataset(gz(body), date(2024, 1, 1))
+
+
 def test_missing_columns_empty_truncated_and_invalid_percentile():
     for content in [
         gz("cve,epss\nCVE-2024-1234,0.1"),

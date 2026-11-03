@@ -9,6 +9,7 @@ from typing import Any
 
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 _METRIC_KEYS = ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
+_METRIC_VERSIONS = dict(zip(_METRIC_KEYS, ("4.0", "3.1", "3.0", "2.0"), strict=True))
 
 
 def _date(value: Any, field: str) -> datetime:
@@ -33,11 +34,20 @@ def _best_metric(metrics: dict[str, Any]) -> dict[str, Any] | None:
             vector = data.get("vectorString") if isinstance(data, dict) else None
             severity = item.get("baseSeverity") or (data.get("baseSeverity") if data else None)
             if isinstance(score, (int, float)) and not isinstance(score, bool) and vector:
-                valid.append((float(score), str(severity) if severity else None, str(vector)))
+                valid.append(
+                    (
+                        item.get("type") != "PRIMARY",
+                        float(score),
+                        str(severity) if severity else None,
+                        str(vector),
+                    )
+                )
         if valid:
-            score, severity, vector = sorted(valid, key=lambda metric: (metric[0], metric[2]))[0]
+            _, score, severity, vector = sorted(
+                valid, key=lambda metric: (metric[0], -metric[1], metric[3])
+            )[0]
             return {
-                "version": key.removeprefix("cvssMetricV").replace("0", ".", 1),
+                "version": _METRIC_VERSIONS[key],
                 "score": score,
                 "severity": severity,
                 "vector": vector,

@@ -56,6 +56,17 @@ def test_insert_idempotent_update_optional_fields_batch_and_retention(session):
     assert session.get(NvdCve, "CVE-2024-0002") is not None
 
 
+def test_older_record_cannot_replace_newer_record(session):
+    from datetime import UTC, datetime
+
+    newer = datetime(2024, 2, 1, tzinfo=UTC)
+    older = datetime(2024, 1, 1, tzinfo=UTC)
+    assert upsert_records(session, [record(1, description="new", last_modified=newer)]) == (1, 0)
+    assert upsert_records(session, [record(1, description="old", last_modified=older)]) == (0, 0)
+    session.flush()
+    assert session.get(NvdCve, "CVE-2024-0001").description == "new"
+
+
 def test_transaction_rollback(session):
     session.execute(
         text("ALTER TABLE nvd_cves ADD CONSTRAINT reject_bad CHECK (description <> 'FAIL')")

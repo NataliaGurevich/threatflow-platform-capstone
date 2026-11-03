@@ -35,7 +35,14 @@ def ingest_cisa_kev(
     settings = settings or Settings()
     acquired_at = datetime.now(UTC)
     LOGGER.info("CISA KEV ingestion started", extra={"source": "cisa_kev"})
-    content = (client or CisaClient()).fetch()
+    content = (
+        client
+        or CisaClient(
+            connect_timeout=settings.http_connect_timeout,
+            read_timeout=settings.http_read_timeout,
+            retries=settings.http_retries,
+        )
+    ).fetch()
     artifact = store_raw_artifact(
         "cisa_kev", content, acquired_at, ".json", raw_data_dir=settings.raw_data_dir
     )

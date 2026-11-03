@@ -1,27 +1,36 @@
 """EPSS UPSERT behavior in an isolated PostgreSQL 17 container."""
 
-from datetime import date
 import gzip
+from datetime import date
 
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from testcontainers.core.docker_client import DockerClient
 from testcontainers.postgres import PostgresContainer
 
+from threatflow.config import Settings
+from threatflow.ingestion import epss_ingestion
 from threatflow.models.base import Base
 from threatflow.models.epss import EpssScore
 from threatflow.repository.epss_repository import upsert_records
-from threatflow.config import Settings
-from threatflow.ingestion import epss_ingestion
 
 
 def row(cve, day, score=0.1):
     return {"cve_id": cve, "score_date": day, "epss_score": score, "percentile": 0.5}
 
 
+def require_docker():
+    try:
+        DockerClient().client.ping()
+    except Exception as exc:
+        pytest.skip(f"Docker daemon unavailable for isolated PostgreSQL test: {exc}")
+
+
 @pytest.fixture
 def session():
+    require_docker()
     with PostgresContainer("postgres:17-alpine") as postgres:
         engine = create_engine(postgres.get_connection_url().replace("psycopg2", "psycopg"))
         Base.metadata.create_all(engine)
@@ -67,6 +76,8 @@ def test_rollback_across_batches(session):
 
 
 def test_ingestion_service_current_and_historical_in_isolated_postgres(monkeypatch, tmp_path):
+    require_docker()
+
     class Client:
         def fetch(self, score_date):
             day = score_date or date(2024, 1, 2)

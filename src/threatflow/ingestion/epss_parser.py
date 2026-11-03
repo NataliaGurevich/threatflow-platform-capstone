@@ -18,14 +18,19 @@ def parse_dataset(content: bytes, score_date: date) -> list[dict]:
         match = re.search(r"score_date:(\d{4}-\d{2}-\d{2})", source_lines[0])
         if match and date.fromisoformat(match.group(1)) != score_date:
             raise ValueError("EPSS source score_date does not match requested date")
-    lines = [line for line in source_lines if not line.startswith("#")]
+        source_lines = source_lines[1:]
+    lines = source_lines
     if not lines:
         raise ValueError("empty EPSS dataset")
     reader = csv.DictReader(lines)
     if not reader.fieldnames or not {"cve", "epss", "percentile"}.issubset(reader.fieldnames):
         raise ValueError("EPSS CSV missing required columns")
+    if len(reader.fieldnames) != len(set(reader.fieldnames)):
+        raise ValueError("EPSS CSV has duplicate columns")
     result, seen = [], set()
     for row in reader:
+        if None in row or any(value is None for value in row.values()):
+            raise ValueError("EPSS CSV row has incorrect number of fields")
         cve = row.get("cve", "")
         if not _CVE.fullmatch(cve):
             raise ValueError(f"invalid CVE identifier: {cve!r}")

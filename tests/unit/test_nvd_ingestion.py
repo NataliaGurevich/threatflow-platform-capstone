@@ -38,6 +38,17 @@ def test_parser_allows_optional_metrics_and_projects_fields():
     assert rows[0]["references"] is None
 
 
+def test_cvss_version_and_primary_metric_selection():
+    metrics = {
+        "cvssMetricV31": [
+            {"type": "PRIMARY", "cvssData": {"baseScore": 9.8, "vectorString": "high"}},
+            {"type": "SECONDARY", "cvssData": {"baseScore": 4.0, "vectorString": "low"}},
+        ]
+    }
+    _, rows = parse_response(payload(records=[cve(metrics=metrics)]))
+    assert (rows[0]["cvss_version"], rows[0]["cvss_score"]) == ("3.1", 9.8)
+
+
 def test_parser_rejects_invalid_id_and_required_fields():
     with pytest.raises(ValueError, match="identifier"):
         parse_response(payload(records=[cve("bad")]))

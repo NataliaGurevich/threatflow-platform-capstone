@@ -1,6 +1,6 @@
 """Bulk PostgreSQL upsert for current NVD CVE records."""
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -33,9 +33,13 @@ def upsert_records(
             index_elements=[NvdCve.cve_id],
             set_={key: getattr(insert_stmt.excluded, key) for key in columns}
             | {"updated_at": func.now()},
+            where=or_(
+                NvdCve.last_modified.is_(None),
+                insert_stmt.excluded.last_modified >= NvdCve.last_modified,
+            ),
         )
-        session.execute(statement)
-        count = sum(cve_id in existing for cve_id in ids)
+        affected = set(session.scalars(statement.returning(NvdCve.cve_id)))
+        count = len(affected & existing)
         updated += count
-        inserted += len(ids) - count
+        inserted += len(affected - existing)
     return inserted, updated
