@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("")
     raw_data_dir: str = "data/raw"
     nvd_api_key: SecretStr | None = None
+    nvd_api_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    nvd_modified_lookback_hours: int = 48
+    nvd_page_size: int = 2000
+    http_connect_timeout: float = 10
+    http_read_timeout: float = 60
+    http_retries: int = 3
 
     @property
     def database_url(self) -> str:
