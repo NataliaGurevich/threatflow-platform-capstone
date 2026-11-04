@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -12,9 +13,10 @@ from sqlalchemy import create_engine, func, select
 from threatflow.config import Settings
 from threatflow.ingestion.epss_client import EpssClient
 from threatflow.ingestion.epss_parser import parse_dataset
-from threatflow.models.epss import EpssScore
+from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
 from threatflow.raw_storage import store_raw_artifact
-from threatflow.repository.epss_repository import prune_history, upsert_records
+from threatflow.repository.epss_repository import prune_history, upsert_records, upsert_summary
+from threatflow.repository.raw_artifact_repository import record_artifact
 
 LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +53,7 @@ class EpssIngestionResult:
     inserted_records: int
     updated_records: int
     pruned_records: int
+    summary_only: bool
 
 
 def ingest_epss(
@@ -93,22 +96,45 @@ def ingest_epss(
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
-                adjacent = (
-                    session.scalar(
-                        select(func.count())
-                        .select_from(EpssScore)
-                        .where(EpssScore.score_date == resolved - timedelta(days=1))
+                score_start = datetime.combine(resolved, datetime.min.time(), UTC)
+                record_artifact(
+                    session,
+                    artifact,
+                    acquired,
+                    request_mode="score_date",
+                    requested_start=score_start,
+                    requested_end=score_start + timedelta(days=1),
+                    record_count=len(records),
+                    ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                )
+                adjacent = session.scalar(
+                    select(EpssDailySummary.record_count).where(
+                        EpssDailySummary.score_date == resolved - timedelta(days=1)
                     )
-                    or 0
                 )
                 validate_completeness(len(records), resolved, adjacent)
-                inserted, updated = upsert_records(session, records)
-                latest_date = session.scalar(select(func.max(EpssScore.score_date)))
-                pruned = prune_history(
-                    session,
-                    latest_date=latest_date or resolved,
-                    retention_days=settings.epss_history_retention_days,
+                latest_date = session.scalar(select(func.max(EpssCurrentScore.score_date)))
+                cutoff = (latest_date or resolved) - timedelta(
+                    days=settings.epss_history_retention_days - 1
                 )
+                summary_only = resolved < cutoff
+                if summary_only:
+                    upsert_summary(session, records)
+                    inserted = updated = pruned = 0
+                    LOGGER.info(
+                        "stage=summary_only score_date=%s records=%d retention_cutoff=%s",
+                        resolved,
+                        len(records),
+                        cutoff,
+                    )
+                else:
+                    inserted, updated = upsert_records(session, records)
+                    latest_date = session.scalar(select(func.max(EpssScore.score_date)))
+                    pruned = prune_history(
+                        session,
+                        latest_date=latest_date or resolved,
+                        retention_days=settings.epss_history_retention_days,
+                    )
                 session.flush()
     finally:
         engine.dispose()
@@ -123,6 +149,7 @@ def ingest_epss(
         inserted,
         updated,
         pruned,
+        summary_only,
     )
 
 

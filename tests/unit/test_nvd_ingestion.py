@@ -119,6 +119,7 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
 
     monkeypatch.setattr(nvd_ingestion, "create_engine", lambda _: Engine())
     monkeypatch.setattr(nvd_ingestion, "upsert_records", lambda session, rows: (1, 0))
+    monkeypatch.setattr(nvd_ingestion, "record_artifact", lambda *args, **kwargs: None)
     settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1)
     result = nvd_ingestion.ingest_nvd_cves(
         client=Client(),

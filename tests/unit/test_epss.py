@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from threatflow.ingestion.epss_client import ARCHIVE_URL, EpssClient
+from threatflow.ingestion.epss_client import ARCHIVE_URL, EpssArchiveNotFound, EpssClient
 from threatflow.ingestion.epss_parser import parse_dataset
 from threatflow.raw_storage import store_raw_artifact
 
@@ -43,6 +43,15 @@ def test_parse_validation_and_exact_raw_bytes(tmp_path):
     assert stored.path.read_bytes() == raw
 
 
+def test_legacy_dataset_derives_percentiles_with_equal_scores_tied():
+    rows = parse_dataset(
+        gz("cve,epss\nCVE-2021-0001,0.1\nCVE-2021-0002,0.2\nCVE-2021-0003,0.2\n"),
+        date(2021, 4, 14),
+    )
+
+    assert [row["percentile"] for row in rows] == [pytest.approx(1 / 3), 1.0, 1.0]
+
+
 def test_reject_invalid_or_duplicate_rows():
     with pytest.raises(ValueError):
         parse_dataset(gz("cve,epss,percentile\nwrong,0.1,0.2"), date.today())
@@ -70,7 +79,7 @@ def test_reject_malformed_csv_structure(body):
 
 def test_missing_columns_empty_truncated_and_invalid_percentile():
     for content in [
-        gz("cve,epss\nCVE-2024-1234,0.1"),
+        gz("cve\nCVE-2024-1234"),
         gz("cve,epss,percentile\n"),
         gz("cve,epss,percentile\nCVE-2024-1234,0.1,2"),
         gz("cve,epss,percentile\nCVE-2024-1234,0.1,not-a-number"),
@@ -104,8 +113,20 @@ def test_client_retries_429_and_stops_at_limit(monkeypatch):
         "threatflow.ingestion.epss_client.httpx.get",
         lambda url, **kw: httpx.Response(404, request=httpx.Request("GET", url)),
     )
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(EpssArchiveNotFound):
         EpssClient(retries=3, sleep=sleeps.append).fetch(date(2024, 1, 1))
+
+
+def test_historical_404_has_explicit_missing_archive_error(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(
+        "threatflow.ingestion.epss_client.httpx.get",
+        lambda url, **kwargs: httpx.Response(404, request=httpx.Request("GET", url)),
+    )
+    with pytest.raises(EpssArchiveNotFound) as caught:
+        EpssClient().fetch(date(2021, 4, 22))
+    assert caught.value.score_date == date(2021, 4, 22)
 
 
 def test_historical_metadata_mismatch_is_rejected():

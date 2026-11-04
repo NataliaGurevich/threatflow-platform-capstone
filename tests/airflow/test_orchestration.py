@@ -34,7 +34,7 @@ def test_nvd_72_hour_outage_recovers_entire_gap():
     assert nvd_recovery_window(resumed, 48, previous) == (previous, resumed)
 
 
-@pytest.mark.parametrize("sources", [[], ["nvd", "nvd"], ["bad"], ["cisa"]])
+@pytest.mark.parametrize("sources", [[], ["nvd", "nvd"], ["bad"]])
 def test_invalid_backfill(sources):
     with pytest.raises(ValueError):
         validate_backfill(sources, "2025-01-01", "2025-01-02")
@@ -147,3 +147,44 @@ def test_backfill_modes_and_dates(monkeypatch):
     calls.clear()
     run_backfill("epss", date(2025, 1, 1), date(2025, 1, 3))
     assert [c[4] for c in calls] == [date(2025, 1, d) for d in (1, 2, 3)]
+
+
+def test_cisa_backfill_uses_git_history_service(monkeypatch):
+    from threatflow.ingestion import cisa_ingestion
+
+    monkeypatch.setattr(
+        cisa_ingestion,
+        "backfill_cisa_kev",
+        lambda start, end: cisa_ingestion.CisaHistoryResult(
+            "cisa_kev", start, end, snapshots=2, parsed_records=20, downloaded_bytes=100
+        ),
+    )
+
+    result = run_backfill("cisa", date(2025, 1, 1), date(2025, 1, 31))
+
+    assert result.records_fetched == 20
+    assert result.records_written == 2
+
+
+def test_cisa_only_backfill_accepts_a_year_but_mixed_sources_do_not():
+    validate_backfill(["cisa"], "2025-01-01", "2025-12-31")
+    with pytest.raises(ValueError, match="invalid or excessive"):
+        validate_backfill(["cisa", "nvd"], "2025-01-01", "2025-12-31")
+
+
+def test_epss_backfill_skips_only_explicitly_missing_archive(monkeypatch, caplog):
+    from threatflow.ingestion.epss_client import EpssArchiveNotFound
+    from threatflow.orchestration import ingestion_runner as runner
+
+    def fake_execute(source, start=None, end=None, mode="modified", score_date=None):
+        if score_date == date(2021, 4, 22):
+            raise EpssArchiveNotFound(score_date)
+        now = datetime.now(UTC)
+        return runner.IngestionResult(source, 1, 1, now, now)
+
+    monkeypatch.setattr(runner, "_execute", fake_execute)
+    result = run_backfill("epss", date(2021, 4, 21), date(2021, 4, 23))
+
+    assert result.records_fetched == 2
+    assert result.missing_dates == 1
+    assert "stage=archive_missing" in caplog.text

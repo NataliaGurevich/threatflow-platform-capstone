@@ -13,6 +13,14 @@ ARCHIVE_URL = "https://raw.githubusercontent.com/empiricalsec/epss_scores/main/{
 RETRYABLE = {408, 429, 500, 502, 503, 504}
 
 
+class EpssArchiveNotFound(Exception):
+    """The official historical repository has no file for a requested date."""
+
+    def __init__(self, score_date: date):
+        self.score_date = score_date
+        super().__init__(f"EPSS archive is unavailable for {score_date}")
+
+
 class EpssClient:
     def __init__(
         self,
@@ -44,6 +52,8 @@ class EpssClient:
                 status = (
                     exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
                 )
+                if score_date is not None and status == 404:
+                    raise EpssArchiveNotFound(score_date) from exc
                 if (status is not None and status not in RETRYABLE) or attempt >= self.retries:
                     raise
                 delay = min(2**attempt, 30)

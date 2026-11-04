@@ -1,5 +1,6 @@
 """PostgreSQL persistence and retention for EPSS scores."""
 
+import math
 from datetime import date, timedelta
 
 from sqlalchemy import delete, func, select
@@ -42,7 +43,7 @@ def upsert_records(
         updated += len(existing)
         inserted += len(batch) - len(existing)
     _upsert_current(session, records, batch_size)
-    _upsert_summary(session, records)
+    _upsert_summary_from_detail(session, records)
     return inserted, updated
 
 
@@ -64,7 +65,33 @@ def _upsert_current(session: Session, records: list[dict], batch_size: int) -> N
         )
 
 
-def _upsert_summary(session: Session, records: list[dict]) -> None:
+def upsert_summary(session: Session, records: list[dict]) -> None:
+    """Upsert complete daily aggregates without requiring detail rows in PostgreSQL."""
+    for score_date in {record["score_date"] for record in records}:
+        scores = [record["epss_score"] for record in records if record["score_date"] == score_date]
+        if not scores:
+            continue
+        values = {
+            "score_date": score_date,
+            "record_count": len(scores),
+            "average_score": math.fsum(scores) / len(scores),
+            "maximum_score": max(scores),
+            "low_risk_count": sum(score < 0.1 for score in scores),
+            "medium_risk_count": sum(0.1 <= score < 0.5 for score in scores),
+            "high_risk_count": sum(score >= 0.5 for score in scores),
+        }
+        stmt = insert(EpssDailySummary).values(values)
+        session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[EpssDailySummary.score_date],
+                set_={key: getattr(stmt.excluded, key) for key in values if key != "score_date"}
+                | {"updated_at": func.now()},
+            )
+        )
+
+
+def _upsert_summary_from_detail(session: Session, records: list[dict]) -> None:
+    """Recalculate summaries from all stored rows after a partial detail upsert."""
     for score_date in {record["score_date"] for record in records}:
         (
             record_count,

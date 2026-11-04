@@ -14,7 +14,7 @@ from threatflow.config import Settings
 from threatflow.ingestion import epss_ingestion
 from threatflow.models.base import Base
 from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
-from threatflow.repository.epss_repository import prune_history, upsert_records
+from threatflow.repository.epss_repository import prune_history, upsert_records, upsert_summary
 
 
 def row(cve, day, score=0.1):
@@ -79,6 +79,25 @@ def test_current_does_not_regress_and_history_retention_is_inclusive(session):
     assert session.get(EpssDailySummary, old) is not None
 
 
+def test_summary_can_be_written_without_detail_rows(session):
+    day = date(2021, 4, 14)
+    upsert_summary(
+        session,
+        [
+            row("CVE-2021-0001", day, 0.05),
+            row("CVE-2021-0002", day, 0.2),
+            row("CVE-2021-0003", day, 0.8),
+        ],
+    )
+    session.flush()
+
+    assert session.scalars(select(EpssScore)).all() == []
+    summary = session.get(EpssDailySummary, day)
+    assert summary.record_count == 3
+    assert summary.average_score == pytest.approx(0.35)
+    assert (summary.low_risk_count, summary.medium_risk_count, summary.high_risk_count) == (1, 1, 1)
+
+
 def test_rollback_across_batches(session):
     session.execute(
         text("ALTER TABLE epss_scores ADD CONSTRAINT reject_score CHECK (epss_score < 0.8)")
@@ -126,4 +145,39 @@ def test_ingestion_service_current_and_historical_in_isolated_postgres(monkeypat
         assert len(list(tmp_path.rglob("*.csv.gz"))) == 2
         with Session(engine) as db:
             assert len(db.scalars(select(EpssScore)).all()) == 2
+        engine.dispose()
+
+
+def test_old_ingestion_uses_summary_only_path(monkeypatch, tmp_path):
+    require_docker()
+    monkeypatch.setattr(epss_ingestion, "validate_completeness", lambda *args: None)
+
+    class Client:
+        def fetch(self, score_date):
+            csv = (
+                f"#model_version:v1,score_date:{score_date.isoformat()}T00:00:00Z\n"
+                "cve,epss,percentile\nCVE-2021-1234,0.2,0.5\n"
+            )
+            return gzip.compress(csv.encode())
+
+    with PostgresContainer("postgres:17-alpine") as postgres:
+        engine = create_engine(postgres.get_connection_url().replace("psycopg2", "psycopg"))
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(EpssCurrentScore(**row("CVE-2026-9999", date(2026, 11, 3))))
+            db.commit()
+        monkeypatch.setattr(epss_ingestion, "create_engine", lambda _: engine)
+
+        result = epss_ingestion.ingest_epss(
+            client=Client(),
+            settings=Settings(raw_data_dir=str(tmp_path)),
+            score_date=date(2021, 4, 14),
+        )
+
+        assert result.summary_only is True
+        assert result.inserted_records == result.updated_records == result.pruned_records == 0
+        with Session(engine) as db:
+            assert db.scalars(select(EpssScore)).all() == []
+            assert db.get(EpssDailySummary, date(2021, 4, 14)).record_count == 1
+            assert db.get(EpssCurrentScore, "CVE-2021-1234") is None
         engine.dispose()

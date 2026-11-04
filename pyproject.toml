@@ -11,6 +11,10 @@ dependencies = [
     "httpx>=0.27,<1",
 ]
 
+[project.scripts]
+threatflow-backfill-range = "threatflow.orchestration.backfill_controller:main"
+threatflow-build-cisa-changes = "threatflow.derivations.cisa_changes:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8",

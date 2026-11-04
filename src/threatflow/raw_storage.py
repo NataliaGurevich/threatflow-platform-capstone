@@ -60,6 +60,14 @@ def store_raw_artifact(
         / f"month={acquired_at.month:02d}"
         / f"{digest}.{normalized_extension}"
     )
+    existing = next(
+        root.glob(f"{source}/year=*/month=*/{digest}.{normalized_extension}"),
+        None,
+    )
+    if existing is not None:
+        if existing.read_bytes() != content:
+            raise OSError(f"existing artifact does not match its content hash: {existing}")
+        return RawArtifactResult(source, digest, existing, len(content), False)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     temp_path: Path | None = None

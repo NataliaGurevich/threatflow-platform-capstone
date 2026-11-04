@@ -1,4 +1,4 @@
-"""Manual bounded NVD/EPSS historical ingestion."""
+"""Manual bounded NVD/CISA/EPSS historical ingestion."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -36,7 +36,7 @@ with DAG(
         execution_timeout=timedelta(minutes=1),
         retries=0,
     )
-    for source in ("nvd", "epss"):
+    for source in ("nvd", "cisa", "epss"):
         check >> ExternalPythonOperator(
             task_id=f"ingest_{source}",
             python_callable=backfill_source,

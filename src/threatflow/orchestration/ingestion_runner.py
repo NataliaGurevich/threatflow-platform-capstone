@@ -17,6 +17,7 @@ class IngestionResult:
     records_written: int
     started_at: datetime
     finished_at: datetime
+    missing_dates: int = 0
 
 
 def validate_backfill(sources, start_date, end_date, nvd_mode="published", max_days=31):
@@ -31,14 +32,11 @@ def validate_backfill(sources, start_date, end_date, nvd_mode="published", max_d
         start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
     except (TypeError, ValueError) as exc:
         raise ValueError("start_date and end_date must be ISO dates") from exc
-    if start > end or end > datetime.now(UTC).date() or (end - start).days + 1 > max_days:
+    effective_max_days = 366 if set(sources) == {"cisa"} else max_days
+    if start > end or end > datetime.now(UTC).date() or (end - start).days + 1 > effective_max_days:
         raise ValueError("invalid or excessive backfill date range")
     if nvd_mode not in {"published", "modified"}:
         raise ValueError("nvd_mode must be published or modified")
-    if "cisa" in sources:
-        raise ValueError(
-            "CISA historical snapshots are unavailable; run cisa_daily for snapshot_sync"
-        )
     return start, end
 
 
@@ -72,6 +70,12 @@ def _execute(source, start=None, end=None, mode="modified", score_date=None):
 
         result = ingest_epss(score_date=score_date)
         fetched, written = result.received_records, result.inserted_records + result.updated_records
+        LOG.info(
+            "stage=epss_storage score_date=%s storage_mode=%s detail_rows_written=%d",
+            result.score_date,
+            "summary_only" if result.summary_only else "detail_and_summary",
+            written,
+        )
     summary = IngestionResult(source, fetched, written, started, datetime.now(UTC))
     LOG.info(
         "ingestion complete source=%s mode=%s start=%s end=%s "
@@ -157,12 +161,28 @@ def run_daily(source: str, interval_start: datetime, interval_end: datetime) -> 
 def run_backfill(
     source: str, start_date: date, end_date: date, mode: str = "default", chunk_days: int = 7
 ) -> IngestionResult:
-    if source not in {"nvd", "epss"} or start_date > end_date or chunk_days < 1 or chunk_days > 31:
+    if (
+        source not in {"nvd", "cisa", "epss"}
+        or start_date > end_date
+        or chunk_days < 1
+        or chunk_days > 31
+    ):
         raise ValueError("invalid backfill source, range, or chunk size")
     if source == "nvd" and mode not in {"default", "published", "modified"}:
         raise ValueError("invalid NVD mode")
     started = datetime.now(UTC)
-    fetched = written = 0
+    fetched = written = missing = 0
+    if source == "cisa":
+        from threatflow.ingestion.cisa_ingestion import backfill_cisa_kev
+
+        result = backfill_cisa_kev(start_date, end_date)
+        return IngestionResult(
+            source,
+            result.parsed_records,
+            result.snapshots,
+            started,
+            datetime.now(UTC),
+        )
     for first, last in date_chunks(start_date, end_date, chunk_days):
         if source == "nvd":
             begin, _ = utc_day(first)
@@ -172,7 +192,17 @@ def run_backfill(
             written += result.records_written
         else:
             for ordinal in range((last - first).days + 1):
-                result = _execute(source, score_date=first + timedelta(days=ordinal))
+                score_date = first + timedelta(days=ordinal)
+                try:
+                    result = _execute(source, score_date=score_date)
+                except Exception as exc:
+                    from threatflow.ingestion.epss_client import EpssArchiveNotFound
+
+                    if not isinstance(exc, EpssArchiveNotFound):
+                        raise
+                    missing += 1
+                    LOG.warning("stage=archive_missing source=epss score_date=%s", score_date)
+                    continue
                 fetched += result.records_fetched
                 written += result.records_written
-    return IngestionResult(source, fetched, written, started, datetime.now(UTC))
+    return IngestionResult(source, fetched, written, started, datetime.now(UTC), missing)

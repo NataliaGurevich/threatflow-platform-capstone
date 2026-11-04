@@ -29,7 +29,7 @@ def test_all_dags_parse_and_use_external_interpreter():
     backfill = bag.dags["threat_intel_backfill"]
     assert not backfill.catchup
     assert backfill.schedule is None
-    for source in ("nvd", "epss"):
+    for source in ("nvd", "cisa", "epss"):
         task = backfill.get_task(f"ingest_{source}")
         assert isinstance(task, ExternalPythonOperator)
         assert task.pool == f"{source}_api_pool"

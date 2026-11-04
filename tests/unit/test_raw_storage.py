@@ -47,6 +47,16 @@ def test_changed_content_creates_distinct_artifact(tmp_path) -> None:
     assert second.path.read_bytes() == b"cve,score\nCVE-1,0.2\n"
 
 
+def test_identical_content_is_reused_across_acquisition_months(tmp_path) -> None:
+    first = store_raw_artifact("nvd", b"raw", ACQUIRED_AT, "json", raw_data_dir=tmp_path)
+    later = ACQUIRED_AT.replace(month=ACQUIRED_AT.month + 1)
+    second = store_raw_artifact("nvd", b"raw", later, "json", raw_data_dir=tmp_path)
+
+    assert second.path == first.path
+    assert second.created is False
+    assert len(list((tmp_path / "nvd").glob("year=*/month=*/*.json"))) == 1
+
+
 def test_sources_have_separate_paths(tmp_path) -> None:
     content = b"same bytes"
     cisa = store_raw_artifact("cisa_kev", content, ACQUIRED_AT, "json", raw_data_dir=tmp_path)

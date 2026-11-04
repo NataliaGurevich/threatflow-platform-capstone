@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -13,6 +14,7 @@ from threatflow.ingestion.nvd_client import NvdClient
 from threatflow.ingestion.nvd_parser import parse_response
 from threatflow.raw_storage import store_raw_artifact
 from threatflow.repository.nvd_repository import upsert_records
+from threatflow.repository.raw_artifact_repository import record_artifact
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ def ingest_nvd_cves(
             read_timeout=settings.http_read_timeout,
             retries=settings.http_retries,
         )
-    artifacts, records = [], []
+    artifacts, artifact_pages, records = [], [], []
     total_bytes = total_received = 0
     index = 0
     expected_total = None
@@ -103,6 +105,7 @@ def ingest_nvd_cves(
             extra={"page": page_number, "bytes": len(content), "sha256": artifact.sha256},
         )
         meta, page_records = parse_response(content)
+        artifact_pages.append((artifact, index, len(page_records)))
         if meta["startIndex"] != index or meta["resultsPerPage"] != len(page_records):
             raise ValueError("NVD pagination metadata does not match requested page")
         if expected_total is None:
@@ -135,6 +138,18 @@ def ingest_nvd_cves(
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
+                for artifact, page_start_index, record_count in artifact_pages:
+                    record_artifact(
+                        session,
+                        artifact,
+                        acquired_at,
+                        request_mode=mode,
+                        requested_start=start,
+                        requested_end=end,
+                        page_start_index=page_start_index,
+                        record_count=record_count,
+                        ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                    )
                 inserted, updated = upsert_records(session, unique)
                 session.flush()
     finally:

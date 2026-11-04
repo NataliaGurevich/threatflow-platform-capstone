@@ -17,6 +17,8 @@ data/raw/
 
 Artifacts are immutable: a complete temporary file is atomically published, and an existing identical artifact is reused. Changed bytes have a different digest and produce a separate file. Raw files are excluded from Git; `.gitignore` preserves the directory placeholder.
 
+`raw_artifacts` is the searchable manifest for these files. It records source, SHA-256, physical path, size, first acquisition, last observation, observation count, request mode and interval, page offset, record count, and the Airflow run ID when available. Deduplication is global per source and hash, including across acquisition months: an identical response observed later reuses its original file and updates `last_seen_at`/`seen_count`; changed bytes create a new immutable artifact. NVD historical request dates remain queryable in the manifest while the physical path continues to represent the first acquisition month.
+
 Configure the storage root with `THREATFLOW_RAW_DATA_DIR` in `.env`; it defaults to `data/raw`. Copy `.env.example` to `.env` and change the value if you want a different local directory. Run unit tests with `uv run python -m pytest`; storage tests use temporary directories and do not connect to PostgreSQL.
 
 ## Phase 1 local setup
@@ -41,7 +43,7 @@ Set `THREATFLOW_NVD_API_KEY` optionally; credentials are sent in the `apiKey` he
 
 The official [FIRST EPSS daily file](https://www.first.org/epss/data) is downloaded as a gzip CSV with `cve`, `epss`, and `percentile` columns. The complete original `.csv.gz` bytes are stored before decompression at `data/raw/epss/year=YYYY/month=MM/<sha256>.csv.gz` (or under `THREATFLOW_RAW_DATA_DIR`). The directory uses the **acquisition** month, while each database row uses the source **score date**.
 
-EPSS uses three database layers. `epss_current` keeps one latest row per CVE for fast joins and scoring. `epss_scores` keeps detailed daily rows for the most recent 30 inclusive score dates by default; configure this with `THREATFLOW_EPSS_HISTORY_RETENTION_DAYS`. `epss_daily_summaries` keeps one compact aggregate row per score date indefinitely. A successful ingestion atomically upserts the detail, current state, and summary, then prunes expired detail. Reprocessing updates corrected values for a date, recalculates its complete summary, and never regresses `epss_current` when an older backfill runs. Immutable raw gzip files are not pruned and remain the recovery source.
+EPSS uses three database layers. `epss_current` keeps one latest row per CVE for fast joins and scoring. `epss_scores` keeps detailed daily rows for the most recent 30 inclusive score dates by default; configure this with `THREATFLOW_EPSS_HISTORY_RETENTION_DAYS`. `epss_daily_summaries` keeps one compact aggregate row per score date indefinitely. Dates older than the retained window use an aggregate-only path: the ingestion stores the immutable raw file, manifest, and daily summary directly, without first writing hundreds of thousands of immediately expired detail/current rows. Dates inside the window atomically upsert detail, current state, and summary, then prune expired detail. Reprocessing updates corrected values and summaries, and an older backfill never regresses `epss_current`. Immutable raw gzip files are not pruned and remain the recovery source.
 
 Set PostgreSQL credentials and, if needed, `THREATFLOW_RAW_DATA_DIR`, `THREATFLOW_HTTP_CONNECT_TIMEOUT`, `THREATFLOW_HTTP_READ_TIMEOUT`, and `THREATFLOW_HTTP_RETRIES` in `.env`. Apply the existing migration to your local database before manual ingestion. Run current ingestion with:
 
@@ -71,7 +73,7 @@ docker compose up -d --build
 
 The metadata migration and pools run in `airflow-init`. Application migrations run in `threatflow-migrate`; `airflow-init` waits for that one-shot service so DAGs cannot start against an outdated application schema. Existing PostgreSQL volumes are supported by the idempotent `airflow-db-init` database creation. Airflow UI is at http://localhost:8080. The `airflow-auth-init` service writes the configured admin password to Airflow's simple auth password file at startup. Keep `.env` outside version control. The API key remains in `THREATFLOW_NVD_API_KEY`. Standalone ingestion entry points remain available as documented above.
 
-Unpause a daily DAG and use **Trigger DAG** for a manual run. Airflow 3.1 manual runs do not expose a data interval to task templates, so daily tasks consistently use `dag_run.run_after` as their scheduling anchor for both scheduled and manual runs. NVD daily recovers missed modification windows after its first successful checkpoint. For a gap predating that checkpoint, trigger `threat_intel_backfill` with `nvd_mode=modified`. To load CVEs originally published in an interval, use `published`; this does not reconstruct later modifications. EPSS daily requests the previous UTC score date because publication may lag. An unavailable dated archive fails the task; retry once the file is published. CISA only supports the current snapshot via `cisa_daily`; selecting it for historical backfill fails validation.
+Unpause a daily DAG and use **Trigger DAG** for a manual run. Airflow 3.1 manual runs do not expose a data interval to task templates, so daily tasks consistently use `dag_run.run_after` as their scheduling anchor for both scheduled and manual runs. NVD daily recovers missed modification windows after its first successful checkpoint. For a gap predating that checkpoint, trigger `threat_intel_backfill` with `nvd_mode=modified`. To load CVEs originally published in an interval, use `published`; this does not reconstruct later modifications. EPSS daily requests the previous UTC score date because publication may lag. An unavailable dated archive fails the task; retry once the file is published. CISA backfill reads revisions of `known_exploited_vulnerabilities.json` from the official `cisagov/kev-data` Git mirror. It stores each validated snapshot and commit SHA in Raw Storage and `raw_artifacts` without overwriting the normalized current-state table owned by `cisa_daily`.
 
 Example backfill trigger configuration (up to 31 inclusive days, chunks of seven by default):
 
@@ -80,6 +82,36 @@ Example backfill trigger configuration (up to 31 inclusive days, chunks of seven
 ```
 
 Use `nvd_mode=modified` to recover changes. Each source runs as one bounded task, with sequential chunks. EPSS iterates dated archive files. No API payload is passed through XCom. Backfill may also be triggered via `docker compose exec airflow-api-server airflow dags trigger threat_intel_backfill --conf '<JSON>'`.
+
+For ranges longer than 31 days, use the resumable controller. It splits the range into sequential Airflow runs, stops on the first failure, and resumes completed windows from an atomic local checkpoint. Use a dry run first; it does not connect to Airflow:
+
+```sh
+uv run threatflow-backfill-range --sources nvd cisa epss --start 2021-04-14 --end 2026-11-03 --nvd-mode modified --dry-run
+```
+
+Then provide the Airflow password through the existing untracked `.env` and run the same command without `--dry-run`:
+
+```sh
+uv run --env-file .env threatflow-backfill-range --sources nvd epss --start 2021-04-14 --end 2026-11-03 --nvd-mode modified
+```
+
+The default outer interval is 31 inclusive days and the NVD request chunk is seven days. Configure them with `--interval-days` and `--chunk-days`. The default checkpoint is `data/backfill-checkpoint.json`, which is ignored by Git and contains no credentials. Deterministic Airflow run IDs make recovery safe if the controller exits after submission. Use a different `--checkpoint` path for a different plan. Only one process may use a checkpoint at a time. For remote Airflow, set `--airflow-url` and `--username`; pass the password through `AIRFLOW_ADMIN_PASSWORD`, not the command line or shell history.
+
+For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
+
+```sh
+uv run --env-file .env threatflow-backfill-range --sources cisa --start 2022-01-01 --end 2026-11-03 --interval-days 366 --checkpoint data/cisa-full-backfill.json
+```
+
+Each commit is checkpointed in `raw_artifacts` as soon as its validated snapshot is stored. Airflow retries and controller restarts skip completed commit SHAs inside a partially completed yearly window. A malformed or truncated HTTP 200 response is retained as raw evidence and downloaded again up to `THREATFLOW_HTTP_RETRIES` times. If the same historical revision remains invalid, it is recorded as `git_history_invalid` and skipped so a transient malformed commit in the official repository does not block later valid history.
+
+Build the normalized change history from already downloaded valid snapshots without another network request:
+
+```sh
+uv run --env-file .env threatflow-build-cisa-changes
+```
+
+`cisa_kev_changes` stores a `baseline` event for every CVE in the first available Git snapshot, then only `added`, `modified`, and `removed` events. `changed_fields`, `previous_values`, and `current_values` are JSONB. Rebuilding is atomic and idempotent: the derived table is replaced in one transaction while immutable raw snapshots remain unchanged.
 
 ### Operational Runbook
 

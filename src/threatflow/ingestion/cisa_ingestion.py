@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import create_engine, func, select
 
 from threatflow.config import Settings
-from threatflow.ingestion.cisa_client import CisaClient
+from threatflow.ingestion.cisa_client import CisaClient, CisaGitHistoryClient
 from threatflow.ingestion.cisa_parser import parse_catalog
 from threatflow.models.cisa import CisaKevVulnerability
+from threatflow.models.raw_artifact import RawArtifact
 from threatflow.raw_storage import store_raw_artifact
 from threatflow.repository.cisa_repository import upsert_records
+from threatflow.repository.raw_artifact_repository import record_artifact
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +31,17 @@ class IngestionResult:
     parsed_records: int
     inserted_records: int
     updated_records: int
+
+
+@dataclass(frozen=True)
+class CisaHistoryResult:
+    source: str
+    start_date: date
+    end_date: date
+    snapshots: int
+    parsed_records: int
+    downloaded_bytes: int
+    invalid_snapshots: int = 0
 
 
 def ingest_cisa_kev(
@@ -54,6 +68,14 @@ def ingest_cisa_kev(
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
+                record_artifact(
+                    session,
+                    artifact,
+                    acquired_at,
+                    request_mode="snapshot",
+                    record_count=len(records),
+                    ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                )
                 previous = (
                     session.scalar(select(func.count()).select_from(CisaKevVulnerability)) or 0
                 )
@@ -78,6 +100,122 @@ def ingest_cisa_kev(
         return result
     finally:
         engine.dispose()
+
+
+def backfill_cisa_kev(
+    start_date: date,
+    end_date: date,
+    *,
+    client: CisaGitHistoryClient | None = None,
+    settings: Settings | None = None,
+) -> CisaHistoryResult:
+    """Store validated official Git snapshots without regressing the current-state table."""
+    if start_date > end_date:
+        raise ValueError("CISA history start must not be after end")
+    settings = settings or Settings()
+    token = settings.github_token.get_secret_value() if settings.github_token else None
+    client = client or CisaGitHistoryClient(
+        token=token,
+        connect_timeout=settings.http_connect_timeout,
+        read_timeout=settings.http_read_timeout,
+        retries=settings.http_retries,
+    )
+    commits = client.list_commits(start_date, end_date)
+    engine = create_engine(settings.database_url)
+    total_records = total_bytes = invalid_snapshots = 0
+    try:
+        with engine.connect() as connection:
+            completed_revisions = set(
+                connection.scalars(
+                    select(RawArtifact.source_revision).where(
+                        RawArtifact.source == "cisa_kev",
+                        RawArtifact.request_mode.in_(["git_history", "git_history_invalid"]),
+                        RawArtifact.source_revision.in_([commit.sha for commit in commits]),
+                    )
+                )
+            )
+        for commit in commits:
+            if commit.sha in completed_revisions:
+                LOGGER.info("stage=cisa_git_snapshot_skipped revision=%s", commit.sha)
+                continue
+            for attempt in range(settings.http_retries + 1):
+                content = client.fetch_snapshot(commit.sha)
+                acquired_at = datetime.now(UTC)
+                artifact = store_raw_artifact(
+                    "cisa_kev", content, acquired_at, ".json", raw_data_dir=settings.raw_data_dir
+                )
+                try:
+                    records = parse_catalog(content)
+                except ValueError as exc:
+                    if attempt >= settings.http_retries:
+                        with engine.begin() as connection:
+                            from sqlalchemy.orm import Session
+
+                            with Session(bind=connection) as session:
+                                record_artifact(
+                                    session,
+                                    artifact,
+                                    acquired_at,
+                                    request_mode="git_history_invalid",
+                                    requested_start=commit.committed_at,
+                                    requested_end=commit.committed_at + timedelta(microseconds=1),
+                                    ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                                    source_revision=commit.sha,
+                                )
+                        total_bytes += len(content)
+                        invalid_snapshots += 1
+                        LOGGER.error(
+                            "stage=cisa_git_snapshot_invalid revision=%s attempts=%d "
+                            "skipped=true error=%s",
+                            commit.sha,
+                            attempt + 1,
+                            exc,
+                        )
+                        records = None
+                        break
+                    LOGGER.warning(
+                        "stage=cisa_git_snapshot_invalid revision=%s attempt=%d retrying=true",
+                        commit.sha,
+                        attempt + 1,
+                    )
+                    continue
+                break
+            if records is None:
+                continue
+            with engine.begin() as connection:
+                from sqlalchemy.orm import Session
+
+                with Session(bind=connection) as session:
+                    record_artifact(
+                        session,
+                        artifact,
+                        acquired_at,
+                        request_mode="git_history",
+                        requested_start=commit.committed_at,
+                        requested_end=commit.committed_at + timedelta(microseconds=1),
+                        record_count=len(records),
+                        ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                        source_revision=commit.sha,
+                    )
+            total_records += len(records)
+            total_bytes += len(content)
+            LOGGER.info(
+                "stage=cisa_git_snapshot revision=%s committed_at=%s records=%d",
+                commit.sha,
+                commit.committed_at.isoformat(),
+                len(records),
+            )
+    finally:
+        engine.dispose()
+    return CisaHistoryResult(
+        "cisa_kev",
+        start_date,
+        end_date,
+        len(commits),
+        total_records,
+        total_bytes,
+        invalid_snapshots,
+    )
 
 
 if __name__ == "__main__":

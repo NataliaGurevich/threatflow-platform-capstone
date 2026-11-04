@@ -1,0 +1,58 @@
+"""Persistence for the raw artifact manifest."""
+
+from datetime import datetime
+
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from threatflow.models.raw_artifact import RawArtifact
+from threatflow.raw_storage import RawArtifactResult
+
+
+def record_artifact(
+    session: Session,
+    artifact: RawArtifactResult,
+    acquired_at: datetime,
+    *,
+    request_mode: str | None = None,
+    requested_start: datetime | None = None,
+    requested_end: datetime | None = None,
+    page_start_index: int | None = None,
+    record_count: int | None = None,
+    ingestion_run_id: str | None = None,
+    source_revision: str | None = None,
+) -> None:
+    extension = "".join(artifact.path.suffixes).removeprefix(".")
+    statement = insert(RawArtifact).values(
+        source=artifact.source,
+        sha256=artifact.sha256,
+        storage_path=str(artifact.path),
+        extension=extension,
+        size_bytes=artifact.size_bytes,
+        first_acquired_at=acquired_at,
+        last_seen_at=acquired_at,
+        request_mode=request_mode,
+        requested_start=requested_start,
+        requested_end=requested_end,
+        page_start_index=page_start_index,
+        record_count=record_count,
+        ingestion_run_id=ingestion_run_id,
+        source_revision=source_revision,
+    )
+    excluded = statement.excluded
+    statement = statement.on_conflict_do_update(
+        constraint="uq_raw_artifacts_source_sha256",
+        set_={
+            "last_seen_at": acquired_at,
+            "seen_count": RawArtifact.seen_count + 1,
+            "request_mode": excluded.request_mode,
+            "requested_start": excluded.requested_start,
+            "requested_end": excluded.requested_end,
+            "page_start_index": excluded.page_start_index,
+            "record_count": excluded.record_count,
+            "ingestion_run_id": excluded.ingestion_run_id,
+            "source_revision": excluded.source_revision,
+            "updated_at": acquired_at,
+        },
+    )
+    session.execute(statement)
