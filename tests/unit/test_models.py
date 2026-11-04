@@ -1,8 +1,13 @@
 from threatflow.models import Base
 
 
-def test_only_three_application_tables_are_defined() -> None:
-    assert set(Base.metadata.tables) == {"cisa_kev_vulnerabilities", "nvd_cves", "epss_scores"}
+def test_expected_business_and_operational_tables_are_defined() -> None:
+    assert set(Base.metadata.tables) == {
+        "cisa_kev_vulnerabilities",
+        "nvd_cves",
+        "epss_scores",
+        "ingestion_checkpoints",
+    }
 
 
 def test_expected_primary_keys() -> None:
@@ -14,3 +19,6 @@ def test_expected_primary_keys() -> None:
         "cve_id",
         "score_date",
     ]
+    assert [
+        column.name for column in Base.metadata.tables["ingestion_checkpoints"].primary_key
+    ] == ["source"]

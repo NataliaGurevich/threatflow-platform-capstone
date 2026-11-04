@@ -5,17 +5,38 @@ from __future__ import annotations
 import gzip
 import logging
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 
 from threatflow.config import Settings
 from threatflow.ingestion.epss_client import EpssClient
 from threatflow.ingestion.epss_parser import parse_dataset
+from threatflow.models.epss import EpssScore
 from threatflow.raw_storage import store_raw_artifact
 from threatflow.repository.epss_repository import upsert_records
 
 LOGGER = logging.getLogger(__name__)
+
+# Conservative floors by dataset era. The published gzip header has model_version and
+# score_date, but no row count. Revisit these floors as the CVE corpus grows.
+MIN_ROWS_BY_YEAR = {
+    2021: 50_000,
+    2022: 75_000,
+    2023: 100_000,
+    2024: 130_000,
+    2025: 160_000,
+    2026: 180_000,
+}
+
+
+def validate_completeness(count: int, score_date: date, adjacent_count: int | None = None):
+    floor = MIN_ROWS_BY_YEAR.get(score_date.year, MIN_ROWS_BY_YEAR[max(MIN_ROWS_BY_YEAR)])
+    if count < floor or (adjacent_count and count < adjacent_count * 0.8):
+        raise ValueError(
+            f"EPSS dataset incomplete for {score_date}: {count} rows; "
+            f"minimum {floor}, adjacent day {adjacent_count}"
+        )
 
 
 @dataclass(frozen=True)
@@ -64,12 +85,22 @@ def ingest_epss(
     else:
         resolved = score_date
     records = parse_dataset(raw, resolved)
+    validate_completeness(len(records), resolved)
     engine = create_engine(settings.database_url)
     try:
         with engine.begin() as connection:
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
+                adjacent = (
+                    session.scalar(
+                        select(func.count())
+                        .select_from(EpssScore)
+                        .where(EpssScore.score_date == resolved - timedelta(days=1))
+                    )
+                    or 0
+                )
+                validate_completeness(len(records), resolved, adjacent)
                 inserted, updated = upsert_records(session, records)
                 session.flush()
     finally:

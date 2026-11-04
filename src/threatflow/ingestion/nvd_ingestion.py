@@ -52,7 +52,10 @@ def ingest_nvd_cves(
     settings: Settings | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    mode: str = "modified",
 ) -> NvdIngestionResult:
+    if mode not in {"modified", "published"}:
+        raise ValueError("NVD mode must be modified or published")
     settings = settings or Settings()
     acquired_at = datetime.now(UTC)
     end = end or acquired_at
@@ -85,7 +88,11 @@ def ingest_nvd_cves(
     page_number = 0
     while True:
         page_number += 1
-        content = client.fetch_page(start, end, index)
+        content = (
+            client.fetch_page(start, end, index)
+            if mode == "modified"
+            else client.fetch_page(start, end, index, mode=mode)
+        )
         artifact = store_raw_artifact(
             "nvd", content, acquired_at, ".json", raw_data_dir=settings.raw_data_dir
         )

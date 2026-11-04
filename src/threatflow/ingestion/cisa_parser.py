@@ -46,6 +46,7 @@ class Vulnerability(BaseModel):
 class Catalog(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
     vulnerabilities: list[Vulnerability]
+    count: int | None = None
 
 
 def parse_catalog(content: bytes) -> list[dict[str, Any]]:
@@ -54,6 +55,10 @@ def parse_catalog(content: bytes) -> list[dict[str, Any]]:
         catalog = Catalog.model_validate(value)
     except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, TypeError) as exc:
         raise ValueError(f"invalid CISA KEV catalog: {exc}") from exc
+    if not catalog.vulnerabilities:
+        raise ValueError("CISA KEV catalog is empty")
+    if catalog.count is not None and catalog.count != len(catalog.vulnerabilities):
+        raise ValueError("CISA KEV catalog count does not match vulnerabilities")
     return [
         {
             "cve_id": r.cveID,

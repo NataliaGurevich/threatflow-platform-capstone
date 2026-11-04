@@ -2,7 +2,7 @@
 
 ThreatFlow is a cybersecurity intelligence data engineering platform for CISA KEV, NVD, and EPSS. Work is being delivered in phases; this foundation establishes configuration, database models, and the initial migration only.
 
-The schema has exactly three application tables: `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`. NVD retains the latest ingested state per CVE, not every historical version. PostgreSQL 17 runs through Docker Compose with a persistent named volume and health check.
+The business schema has three tables: `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`. The separate `ingestion_checkpoints` table stores operational NVD coverage. NVD retains the latest ingested state per CVE, not every historical version. PostgreSQL 17 runs through Docker Compose with a persistent named volume and health check.
 
 ## Raw data storage (Phase 2)
 
@@ -56,3 +56,49 @@ uv run python -m threatflow.ingestion.epss_ingestion --score-date 2024-12-21
 Current ingestion requires the CSV's `score_date` metadata; it fails if that date cannot be established. Historical ingestion uses the dated archive filename and rejects any conflicting embedded score date. Publication may occur after the score date begins; acquisition time never supplies the score date. Invalid or incomplete files remain in immutable Raw Storage for investigation, and database changes roll back on failure. Historical files before the archive's 2021-04-14 start are unavailable. Bulk historical orchestration is outside this phase.
 
 Run unit and isolated PostgreSQL 17 Testcontainers tests with `uv run pytest -v`. Integration tests require a working Docker daemon; skipped tests do not establish successful verification.
+
+## Airflow orchestration
+
+Airflow 3.1.0 uses LocalExecutor and a separate `airflow` PostgreSQL database. The application still owns HTTP requests, validation, raw artifacts, transactions, and upserts. The Airflow image installs `threatflow` in a separate Python environment because Airflow pins SQLAlchemy 1.4 while the application uses SQLAlchemy 2; ingestion tasks use `ExternalPythonOperator`. The three daily DAGs run at 03:00 NVD, 04:00 CISA, and 06:00 EPSS UTC; `threat_intel_backfill` is manual. Each ingestion task uses a one-slot source pool shared by daily and backfill. DAG schedules are set in the DAG files.
+
+Copy `.env.example` to `.env`, set `THREATFLOW_POSTGRES_PASSWORD` and `AIRFLOW_ADMIN_PASSWORD`, and generate a persistent `AIRFLOW_JWT_SECRET` (for example, `openssl rand -hex 32`). Airflow components must share this secret to validate login tokens. Then start; application and Airflow metadata migrations run automatically before the long-running services:
+
+```sh
+docker compose up -d --build
+```
+
+The metadata migration and pools run in `airflow-init`. Application migrations run in `threatflow-migrate`; `airflow-init` waits for that one-shot service so DAGs cannot start against an outdated application schema. Existing PostgreSQL volumes are supported by the idempotent `airflow-db-init` database creation. Airflow UI is at http://localhost:8080. The `airflow-auth-init` service writes the configured admin password to Airflow's simple auth password file at startup. Keep `.env` outside version control. The API key remains in `THREATFLOW_NVD_API_KEY`. Standalone ingestion entry points remain available as documented above.
+
+Unpause a daily DAG and use **Trigger DAG** for a manual run. Airflow 3.1 manual runs do not expose a data interval to task templates, so daily tasks consistently use `dag_run.run_after` as their scheduling anchor for both scheduled and manual runs. NVD daily recovers missed modification windows after its first successful checkpoint. For a gap predating that checkpoint, trigger `threat_intel_backfill` with `nvd_mode=modified`. To load CVEs originally published in an interval, use `published`; this does not reconstruct later modifications. EPSS daily requests the previous UTC score date because publication may lag. An unavailable dated archive fails the task; retry once the file is published. CISA only supports the current snapshot via `cisa_daily`; selecting it for historical backfill fails validation.
+
+Example backfill trigger configuration (up to 31 inclusive days, chunks of seven by default):
+
+```json
+{"sources":["nvd","epss"],"start_date":"2025-01-01","end_date":"2025-01-07","nvd_mode":"published","chunk_days":7}
+```
+
+Use `nvd_mode=modified` to recover changes. Each source runs as one bounded task, with sequential chunks. EPSS iterates dated archive files. No API payload is passed through XCom. Backfill may also be triggered via `docker compose exec airflow-api-server airflow dags trigger threat_intel_backfill --conf '<JSON>'`.
+
+### Operational Runbook
+
+On a failed DAG, inspect the task log in the UI, fix the source or configuration issue, then clear the failed task to rerun it. Task logs include `stage=...` markers for input validation, source fetch, NVD chunks and checkpoints, and completion. They persist in the `airflow_logs` volume and are shared by the scheduler and API server. If the UI is unavailable, find them with `docker compose exec airflow-scheduler find /opt/airflow/logs -type f -name '*.log'` and inspect one with `docker compose exec airflow-scheduler tail -n 200 <log-path>`. HTTP 429 is retried with bounded backoff in the client and then by Airflow; check the NVD API key and allow the source quota to recover. For a missed NVD interval, run a `modified` backfill for the exact dates in chunks no longer than 31 days. For missed EPSS scores, backfill the missing score dates. Check task success and fetched/written counts in logs; a zero `written` count can be valid for an unchanged NVD or CISA snapshot.
+
+Verify application rows in PostgreSQL:
+
+```sql
+SELECT count(*), max(last_modified) FROM nvd_cves;
+SELECT count(*), max(date_added) FROM cisa_kev_vulnerabilities;
+SELECT score_date, count(*) FROM epss_scores GROUP BY score_date ORDER BY score_date DESC LIMIT 7;
+```
+
+Run unit tests with `uv run python -m pytest tests/unit tests/airflow`. Run isolated PostgreSQL integration tests with `uv run python -m pytest tests/integration` while Docker is available. The Airflow image can parse DAGs with `docker compose exec airflow-scheduler airflow dags list-import-errors`.
+
+The adapter is also callable outside Airflow: `uv run python -m threatflow.orchestration daily nvd --start 2025-01-01T00:00:00+00:00 --end 2025-01-02T00:00:00+00:00` or `uv run python -m threatflow.orchestration backfill epss --start 2025-01-01 --end 2025-01-07`. The standalone command uses the same application services.
+
+### Completeness and outage recovery
+
+Apply the application migration before enabling the updated NVD DAG: `docker compose --profile migrate run --rm threatflow-migrate`. NVD daily stores the last successfully covered modification timestamp in the application PostgreSQL `ingestion_checkpoints` table. It resumes there after downtime, splits long gaps into 120-day requests, and advances the checkpoint only after each successful chunk. A PostgreSQL advisory lock serializes overlapping daily runs. The initial run covers the configured lookback only; for a gap predating the first checkpoint, run a bounded manual `modified` backfill. The checkpoint survives Airflow reinstallation if the application database volume is retained.
+
+CISA rejects empty catalogs, a mismatch with published `count`, and snapshots more than 20% smaller than a stored catalog of at least 20 rows. EPSS gzip headers publish a score date and model version but no record count. Ingestion requires conservative date-era minimums (2021: 50k, 2022: 75k, 2023: 100k, 2024: 130k, 2025: 160k, 2026 onward: 180k), plus at least 80% of the previous stored day's count. These thresholds should be reviewed when source coverage changes. Both validations fail before upsert.
+
+For image-level verification, run `docker compose config -q`, start the services as above, then run `docker compose exec airflow-scheduler airflow dags list-import-errors` and the DAG contract test inside the Airflow image. Run `pytest tests/integration` with Docker access before relying on PostgreSQL idempotency.

@@ -77,6 +77,7 @@ def test_rollback_across_batches(session):
 
 def test_ingestion_service_current_and_historical_in_isolated_postgres(monkeypatch, tmp_path):
     require_docker()
+    monkeypatch.setattr(epss_ingestion, "validate_completeness", lambda *args: None)
 
     class Client:
         def fetch(self, score_date):

@@ -2,6 +2,8 @@ import hashlib
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from threatflow.config import Settings
 from threatflow.ingestion.cisa_ingestion import ingest_cisa_kev
 
@@ -37,14 +39,16 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
             pass
 
     monkeypatch.setattr("threatflow.ingestion.cisa_ingestion.store_raw_artifact", store)
-    monkeypatch.setattr("threatflow.ingestion.cisa_ingestion.create_engine", lambda _: Engine())
+
+    def no_database(_):
+        raise AssertionError("database must not be opened for invalid catalog")
+
+    monkeypatch.setattr("threatflow.ingestion.cisa_ingestion.create_engine", no_database)
     monkeypatch.setattr(
         "threatflow.ingestion.cisa_ingestion.upsert_records", lambda session, records: (0, 0)
     )
-    result = ingest_cisa_kev(client=Client(), settings=Settings(raw_data_dir=str(tmp_path)))
+    with pytest.raises(ValueError, match="empty"):
+        ingest_cisa_kev(client=Client(), settings=Settings(raw_data_dir=str(tmp_path)))
 
     assert observed["bytes"] == content
     assert (tmp_path / "artifact.json").read_bytes() == content
-    assert result.sha256 == hashlib.sha256(content).hexdigest()
-    assert result.downloaded_bytes == len(content)
-    assert result.parsed_records == 0

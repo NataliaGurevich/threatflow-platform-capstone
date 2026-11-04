@@ -128,3 +128,37 @@ def test_current_ingestion_requires_metadata_and_preserves_raw(tmp_path):
     with pytest.raises(ValueError, match="no authoritative score_date"):
         ingest_epss(client=Client(), settings=Settings(raw_data_dir=str(tmp_path)))
     assert list(tmp_path.rglob("*.csv.gz"))
+
+
+@pytest.mark.parametrize("year,minimum", [(2021, 50_000), (2024, 130_000), (2026, 180_000)])
+def test_historical_completeness_floor(year, minimum):
+    from threatflow.ingestion.epss_ingestion import validate_completeness
+
+    validate_completeness(minimum, date(year, 5, 1))
+    with pytest.raises(ValueError, match="incomplete"):
+        validate_completeness(minimum - 1, date(year, 5, 1))
+    with pytest.raises(ValueError, match="incomplete"):
+        validate_completeness(minimum, date(year, 5, 1), minimum * 2)
+
+
+def test_incomplete_historical_archive_never_opens_database(tmp_path, monkeypatch):
+    from threatflow.config import Settings
+    from threatflow.ingestion.epss_ingestion import ingest_epss
+
+    class Client:
+        def fetch(self, score_date):
+            return gz(
+                f"#model_version:v1,score_date:{score_date}T00:00:00Z\n"
+                "cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n"
+            )
+
+    def no_database(_):
+        raise AssertionError("incomplete archive must not reach database")
+
+    monkeypatch.setattr("threatflow.ingestion.epss_ingestion.create_engine", no_database)
+    with pytest.raises(ValueError, match="incomplete"):
+        ingest_epss(
+            score_date=date(2021, 5, 1),
+            client=Client(),
+            settings=Settings(raw_data_dir=str(tmp_path)),
+        )

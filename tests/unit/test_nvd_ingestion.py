@@ -38,6 +38,16 @@ def test_parser_allows_optional_metrics_and_projects_fields():
     assert rows[0]["references"] is None
 
 
+def test_parser_treats_nvd_offsetless_response_timestamps_as_utc():
+    record = cve(modified="2024-01-02T00:00:00.000")
+    record["cve"]["published"] = "2024-01-01T00:00:00.000"
+
+    _, rows = parse_response(payload(records=[record]))
+
+    assert rows[0]["published"] == datetime(2024, 1, 1, tzinfo=UTC)
+    assert rows[0]["last_modified"] == datetime(2024, 1, 2, tzinfo=UTC)
+
+
 def test_cvss_version_and_primary_metric_selection():
     metrics = {
         "cvssMetricV31": [

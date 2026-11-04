@@ -39,16 +39,21 @@ class NvdClient:
         self.sleep = sleep
         self._last_request = 0.0
 
-    def fetch_page(self, start: datetime, end: datetime, start_index: int) -> bytes:
+    def fetch_page(
+        self, start: datetime, end: datetime, start_index: int, mode: str = "modified"
+    ) -> bytes:
+        if mode not in {"modified", "published"}:
+            raise ValueError("NVD mode must be modified or published")
         if start.tzinfo is None or end.tzinfo is None or start >= end:
             raise ValueError("date window must be timezone-aware and start before end")
         if (end - start).total_seconds() > 120 * 86400:
             raise ValueError("NVD modification window cannot exceed 120 days")
+        prefix = "lastMod" if mode == "modified" else "pub"
         params = {
-            "lastModStartDate": start.astimezone(UTC)
+            f"{prefix}StartDate": start.astimezone(UTC)
             .isoformat(timespec="milliseconds")
             .replace("+00:00", "Z"),
-            "lastModEndDate": end.astimezone(UTC)
+            f"{prefix}EndDate": end.astimezone(UTC)
             .isoformat(timespec="milliseconds")
             .replace("+00:00", "Z"),
             "startIndex": start_index,

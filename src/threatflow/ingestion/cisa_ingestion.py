@@ -6,11 +6,12 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 
 from threatflow.config import Settings
 from threatflow.ingestion.cisa_client import CisaClient
 from threatflow.ingestion.cisa_parser import parse_catalog
+from threatflow.models.cisa import CisaKevVulnerability
 from threatflow.raw_storage import store_raw_artifact
 from threatflow.repository.cisa_repository import upsert_records
 
@@ -53,6 +54,14 @@ def ingest_cisa_kev(
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
+                previous = (
+                    session.scalar(select(func.count()).select_from(CisaKevVulnerability)) or 0
+                )
+                if previous >= 20 and len(records) < previous * 0.8:
+                    raise ValueError(
+                        f"CISA KEV catalog shrank unexpectedly: "
+                        f"{len(records)} versus {previous} stored"
+                    )
                 inserted, updated = upsert_records(session, records)
                 session.flush()
         result = IngestionResult(

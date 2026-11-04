@@ -24,7 +24,13 @@ def test_parser_and_empty_catalog():
         parse_catalog(json.dumps({"vulnerabilities": [RECORD]}).encode())[0]["cve_id"]
         == "CVE-2024-1234"
     )
-    assert parse_catalog(b'{"vulnerabilities":[]}') == []
+    with pytest.raises(ValueError, match="empty"):
+        parse_catalog(b'{"vulnerabilities":[]}')
+
+
+def test_declared_catalog_count():
+    with pytest.raises(ValueError, match="count"):
+        parse_catalog(json.dumps({"count": 2, "vulnerabilities": [RECORD]}).encode())
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
@@ -19,9 +19,12 @@ def _date(value: Any, field: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(f"invalid {field}") from exc
+    # NVD API 2.0 emits response timestamps without an offset (for example,
+    # 2023-01-10T19:46:53.290) while its date parameters and service operate
+    # in UTC. Attach UTC only for this documented NVD response shape.
     if parsed.utcoffset() is None:
-        raise ValueError(f"{field} must include a timezone")
-    return parsed
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _best_metric(metrics: dict[str, Any]) -> dict[str, Any] | None:
