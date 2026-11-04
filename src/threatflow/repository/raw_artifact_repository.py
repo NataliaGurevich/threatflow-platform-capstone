@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -45,13 +46,13 @@ def record_artifact(
         set_={
             "last_seen_at": acquired_at,
             "seen_count": RawArtifact.seen_count + 1,
-            "request_mode": excluded.request_mode,
-            "requested_start": excluded.requested_start,
-            "requested_end": excluded.requested_end,
+            "request_mode": func.coalesce(RawArtifact.request_mode, excluded.request_mode),
+            "requested_start": func.coalesce(RawArtifact.requested_start, excluded.requested_start),
+            "requested_end": func.coalesce(RawArtifact.requested_end, excluded.requested_end),
             "page_start_index": excluded.page_start_index,
             "record_count": excluded.record_count,
             "ingestion_run_id": excluded.ingestion_run_id,
-            "source_revision": excluded.source_revision,
+            "source_revision": func.coalesce(RawArtifact.source_revision, excluded.source_revision),
             "updated_at": acquired_at,
         },
     )

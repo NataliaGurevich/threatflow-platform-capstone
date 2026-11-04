@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -27,7 +27,7 @@ class CisaChangesResult:
     removed: int
 
 
-def _json_safe(record: dict) -> dict:
+def json_safe_record(record: dict) -> dict:
     return {
         key: value.isoformat() if isinstance(value, (date, datetime)) else value
         for key, value in record.items()
@@ -40,11 +40,13 @@ def calculate_changes(
     *,
     commit_sha: str,
     committed_at: datetime,
+    revision_type: str = "git_commit",
 ) -> list[dict]:
     if previous is None:
         return [
             {
                 "commit_sha": commit_sha,
+                "revision_type": revision_type,
                 "committed_at": committed_at,
                 "cve_id": cve_id,
                 "change_type": "baseline",
@@ -59,6 +61,7 @@ def calculate_changes(
         changes.append(
             {
                 "commit_sha": commit_sha,
+                "revision_type": revision_type,
                 "committed_at": committed_at,
                 "cve_id": cve_id,
                 "change_type": "added",
@@ -71,6 +74,7 @@ def calculate_changes(
         changes.append(
             {
                 "commit_sha": commit_sha,
+                "revision_type": revision_type,
                 "committed_at": committed_at,
                 "cve_id": cve_id,
                 "change_type": "removed",
@@ -88,6 +92,7 @@ def calculate_changes(
             changes.append(
                 {
                     "commit_sha": commit_sha,
+                    "revision_type": revision_type,
                     "committed_at": committed_at,
                     "cve_id": cve_id,
                     "change_type": "modified",
@@ -99,7 +104,7 @@ def calculate_changes(
     return changes
 
 
-def _local_path(stored_path: str, raw_root: Path) -> Path:
+def resolve_cisa_artifact_path(stored_path: str, raw_root: Path) -> Path:
     stored = Path(stored_path)
     if stored.exists():
         return stored
@@ -124,24 +129,35 @@ def rebuild_cisa_changes(settings: Settings | None = None) -> CisaChangesResult:
                 select(RawArtifact)
                 .where(
                     RawArtifact.source == "cisa_kev",
-                    RawArtifact.request_mode == "git_history",
-                    RawArtifact.source_revision.is_not(None),
+                    RawArtifact.request_mode.in_(("git_history", "snapshot")),
                 )
-                .order_by(RawArtifact.requested_start, RawArtifact.source_revision)
+                .order_by(
+                    func.coalesce(RawArtifact.requested_start, RawArtifact.first_acquired_at),
+                    RawArtifact.source_revision,
+                    RawArtifact.sha256,
+                )
             ).all()
         previous = None
         with engine.begin() as connection:
             session = Session(bind=connection)
             session.execute(delete(CisaKevChange))
             for artifact in artifacts:
-                path = _local_path(artifact.storage_path, Path(settings.raw_data_dir))
+                path = resolve_cisa_artifact_path(
+                    artifact.storage_path, Path(settings.raw_data_dir)
+                )
                 records = parse_catalog(path.read_bytes())
-                current = {record["cve_id"]: _json_safe(record) for record in records}
+                current = {record["cve_id"]: json_safe_record(record) for record in records}
+                is_git_revision = (
+                    artifact.request_mode == "git_history" and artifact.source_revision is not None
+                )
                 changes = calculate_changes(
                     previous,
                     current,
-                    commit_sha=artifact.source_revision,
-                    committed_at=artifact.requested_start,
+                    commit_sha=(artifact.source_revision if is_git_revision else artifact.sha256),
+                    committed_at=(
+                        artifact.requested_start if is_git_revision else artifact.first_acquired_at
+                    ),
+                    revision_type=("git_commit" if is_git_revision else "content_sha256"),
                 )
                 for offset in range(0, len(changes), 1000):
                     session.execute(insert(CisaKevChange).values(changes[offset : offset + 1000]))
@@ -156,7 +172,7 @@ def rebuild_cisa_changes(settings: Settings | None = None) -> CisaChangesResult:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Rebuild cisa_kev_changes from validated immutable Git snapshots."
+        description="Rebuild cisa_kev_changes from validated immutable raw snapshots."
     )
     parser.parse_args()
     result = rebuild_cisa_changes()

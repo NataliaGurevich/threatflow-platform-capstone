@@ -31,10 +31,11 @@ def daily(source, interval_start, interval_end):
     log.info("stage=ingestion_start source=%s", source)
     result = run_daily(source, start, end)
     log.info(
-        "stage=ingestion_complete source=%s fetched=%d written=%d",
+        "stage=ingestion_complete source=%s fetched=%d written=%d changes_written=%d",
         result.source,
         result.records_fetched,
         result.records_written,
+        result.changes_written,
     )
     return asdict(result)
 

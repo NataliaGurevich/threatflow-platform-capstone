@@ -6,15 +6,22 @@ import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import create_engine, func, select
 
 from threatflow.config import Settings
+from threatflow.derivations.cisa_changes import (
+    calculate_changes,
+    json_safe_record,
+    resolve_cisa_artifact_path,
+)
 from threatflow.ingestion.cisa_client import CisaClient, CisaGitHistoryClient
 from threatflow.ingestion.cisa_parser import parse_catalog
 from threatflow.models.cisa import CisaKevVulnerability
 from threatflow.models.raw_artifact import RawArtifact
 from threatflow.raw_storage import store_raw_artifact
+from threatflow.repository.cisa_change_repository import upsert_changes
 from threatflow.repository.cisa_repository import upsert_records
 from threatflow.repository.raw_artifact_repository import record_artifact
 
@@ -31,6 +38,7 @@ class IngestionResult:
     parsed_records: int
     inserted_records: int
     updated_records: int
+    change_records: int
 
 
 @dataclass(frozen=True)
@@ -68,6 +76,28 @@ def ingest_cisa_kev(
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
+                known_artifact = session.scalar(
+                    select(RawArtifact.id).where(
+                        RawArtifact.source == "cisa_kev",
+                        RawArtifact.sha256 == artifact.sha256,
+                    )
+                )
+                previous_artifact = None
+                if known_artifact is None:
+                    previous_artifact = session.scalar(
+                        select(RawArtifact)
+                        .where(
+                            RawArtifact.source == "cisa_kev",
+                            RawArtifact.request_mode.in_(["snapshot", "git_history"]),
+                            RawArtifact.sha256 != artifact.sha256,
+                        )
+                        .order_by(
+                            func.coalesce(
+                                RawArtifact.requested_start, RawArtifact.last_seen_at
+                            ).desc()
+                        )
+                        .limit(1)
+                    )
                 record_artifact(
                     session,
                     artifact,
@@ -84,6 +114,26 @@ def ingest_cisa_kev(
                         f"CISA KEV catalog shrank unexpectedly: "
                         f"{len(records)} versus {previous} stored"
                     )
+                changes = []
+                if known_artifact is None:
+                    previous = None
+                    if previous_artifact is not None:
+                        previous_path = resolve_cisa_artifact_path(
+                            previous_artifact.storage_path, Path(settings.raw_data_dir)
+                        )
+                        previous = {
+                            record["cve_id"]: json_safe_record(record)
+                            for record in parse_catalog(previous_path.read_bytes())
+                        }
+                    current = {record["cve_id"]: json_safe_record(record) for record in records}
+                    changes = calculate_changes(
+                        previous,
+                        current,
+                        commit_sha=artifact.sha256,
+                        committed_at=acquired_at,
+                        revision_type="content_sha256",
+                    )
+                    upsert_changes(session, changes)
                 inserted, updated = upsert_records(session, records)
                 session.flush()
         result = IngestionResult(
@@ -95,6 +145,7 @@ def ingest_cisa_kev(
             len(records),
             inserted,
             updated,
+            len(changes),
         )
         LOGGER.info("CISA KEV ingestion finished", extra=asdict(result))
         return result

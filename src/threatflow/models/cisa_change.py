@@ -22,7 +22,8 @@ class CisaKevChange(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    commit_sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision_type: Mapped[str] = mapped_column(String(16), nullable=False)
     committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cve_id: Mapped[str] = mapped_column(String(32), nullable=False)
     change_type: Mapped[str] = mapped_column(String(16), nullable=False)

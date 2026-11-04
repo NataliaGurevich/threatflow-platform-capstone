@@ -18,6 +18,7 @@ class IngestionResult:
     started_at: datetime
     finished_at: datetime
     missing_dates: int = 0
+    changes_written: int = 0
 
 
 def validate_backfill(sources, start_date, end_date, nvd_mode="published", max_days=31):
@@ -52,6 +53,7 @@ def _execute(source, start=None, end=None, mode="modified", score_date=None):
         end,
         score_date,
     )
+    changes_written = 0
     if source == "nvd":
         from threatflow.ingestion.nvd_ingestion import ingest_nvd_cves
 
@@ -65,6 +67,7 @@ def _execute(source, start=None, end=None, mode="modified", score_date=None):
 
         result = ingest_cisa_kev()
         fetched, written = result.parsed_records, result.inserted_records + result.updated_records
+        changes_written = result.change_records
     else:
         from threatflow.ingestion.epss_ingestion import ingest_epss
 
@@ -76,10 +79,17 @@ def _execute(source, start=None, end=None, mode="modified", score_date=None):
             "summary_only" if result.summary_only else "detail_and_summary",
             written,
         )
-    summary = IngestionResult(source, fetched, written, started, datetime.now(UTC))
+    summary = IngestionResult(
+        source,
+        fetched,
+        written,
+        started,
+        datetime.now(UTC),
+        changes_written=changes_written,
+    )
     LOG.info(
         "ingestion complete source=%s mode=%s start=%s end=%s "
-        "score_date=%s fetched=%d written=%d duration_seconds=%.2f",
+        "score_date=%s fetched=%d written=%d changes_written=%d duration_seconds=%.2f",
         source,
         mode,
         start,
@@ -87,6 +97,7 @@ def _execute(source, start=None, end=None, mode="modified", score_date=None):
         score_date,
         fetched,
         written,
+        changes_written,
         (summary.finished_at - started).total_seconds(),
     )
     return summary
