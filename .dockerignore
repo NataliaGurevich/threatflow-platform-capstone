@@ -45,3 +45,7 @@ build/
 
 # Agent
 AGENTS.md
+
+# data
+data/*
+data/*backfill-checkpoint.json*
