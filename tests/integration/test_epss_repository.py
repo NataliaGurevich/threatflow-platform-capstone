@@ -13,8 +13,8 @@ from testcontainers.postgres import PostgresContainer
 from threatflow.config import Settings
 from threatflow.ingestion import epss_ingestion
 from threatflow.models.base import Base
-from threatflow.models.epss import EpssScore
-from threatflow.repository.epss_repository import upsert_records
+from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
+from threatflow.repository.epss_repository import prune_history, upsert_records
 
 
 def row(cve, day, score=0.1):
@@ -54,6 +54,29 @@ def test_insert_repeat_update_dates_batch_and_retention(session):
     assert session.get(EpssScore, ("CVE-2024-1234", b)).epss_score == 0.4
     assert session.get(EpssScore, ("CVE-2024-5678", a)) is not None
     assert len(session.scalars(select(EpssScore)).all()) == 3
+    current = session.get(EpssCurrentScore, "CVE-2024-1234")
+    assert (current.score_date, current.epss_score) == (b, 0.4)
+    summary = session.get(EpssDailySummary, a)
+    assert (summary.record_count, summary.high_risk_count) == (2, 1)
+
+
+def test_current_does_not_regress_and_history_retention_is_inclusive(session):
+    latest = date(2024, 2, 1)
+    old = date(2024, 1, 1)
+    cutoff = date(2024, 1, 3)
+    upsert_records(session, [row("CVE-2024-1234", latest, 0.8)])
+    upsert_records(session, [row("CVE-2024-1234", old, 0.1)])
+    upsert_records(session, [row("CVE-2024-5678", cutoff, 0.2)])
+
+    deleted = prune_history(session, latest_date=latest, retention_days=30)
+    session.flush()
+
+    assert deleted == 1
+    assert session.get(EpssScore, ("CVE-2024-1234", old)) is None
+    assert session.get(EpssScore, ("CVE-2024-5678", cutoff)) is not None
+    current = session.get(EpssCurrentScore, "CVE-2024-1234")
+    assert (current.score_date, current.epss_score) == (latest, 0.8)
+    assert session.get(EpssDailySummary, old) is not None
 
 
 def test_rollback_across_batches(session):

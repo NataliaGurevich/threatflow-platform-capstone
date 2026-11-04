@@ -14,7 +14,7 @@ from threatflow.ingestion.epss_client import EpssClient
 from threatflow.ingestion.epss_parser import parse_dataset
 from threatflow.models.epss import EpssScore
 from threatflow.raw_storage import store_raw_artifact
-from threatflow.repository.epss_repository import upsert_records
+from threatflow.repository.epss_repository import prune_history, upsert_records
 
 LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ class EpssIngestionResult:
     received_records: int
     inserted_records: int
     updated_records: int
+    pruned_records: int
 
 
 def ingest_epss(
@@ -102,6 +103,12 @@ def ingest_epss(
                 )
                 validate_completeness(len(records), resolved, adjacent)
                 inserted, updated = upsert_records(session, records)
+                latest_date = session.scalar(select(func.max(EpssScore.score_date)))
+                pruned = prune_history(
+                    session,
+                    latest_date=latest_date or resolved,
+                    retention_days=settings.epss_history_retention_days,
+                )
                 session.flush()
     finally:
         engine.dispose()
@@ -115,6 +122,7 @@ def ingest_epss(
         len(records),
         inserted,
         updated,
+        pruned,
     )
 
 

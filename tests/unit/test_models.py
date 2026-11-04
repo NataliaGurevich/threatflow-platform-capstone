@@ -6,6 +6,8 @@ def test_expected_business_and_operational_tables_are_defined() -> None:
         "cisa_kev_vulnerabilities",
         "nvd_cves",
         "epss_scores",
+        "epss_current",
+        "epss_daily_summaries",
         "ingestion_checkpoints",
     }
 
@@ -22,3 +24,9 @@ def test_expected_primary_keys() -> None:
     assert [
         column.name for column in Base.metadata.tables["ingestion_checkpoints"].primary_key
     ] == ["source"]
+    assert [column.name for column in Base.metadata.tables["epss_current"].primary_key] == [
+        "cve_id"
+    ]
+    assert [column.name for column in Base.metadata.tables["epss_daily_summaries"].primary_key] == [
+        "score_date"
+    ]

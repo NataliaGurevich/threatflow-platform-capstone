@@ -148,6 +148,15 @@ services:
       - cd /opt/threatflow && /opt/threatflow-venv/bin/alembic -c /opt/threatflow/alembic.ini upgrade head
     restart: 'no'
 
+  airflow-maintenance:
+    <<: *airflow-common
+    command:
+      - bash
+      - /opt/airflow/scripts/maintenance.sh
+    restart: 'no'
+    profiles:
+      - maintenance
+
 volumes:
   postgres_data:
   airflow_logs:

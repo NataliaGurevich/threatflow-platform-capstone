@@ -2,7 +2,7 @@
 
 ThreatFlow is a cybersecurity intelligence data engineering platform for CISA KEV, NVD, and EPSS. Work is being delivered in phases; this foundation establishes configuration, database models, and the initial migration only.
 
-The business schema has three tables: `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`. The separate `ingestion_checkpoints` table stores operational NVD coverage. NVD retains the latest ingested state per CVE, not every historical version. PostgreSQL 17 runs through Docker Compose with a persistent named volume and health check.
+The source schema has `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`. EPSS also has the derived `epss_current` and `epss_daily_summaries` tables. The separate `ingestion_checkpoints` table stores operational NVD coverage. NVD and CISA retain the latest ingested state per CVE, not a full database snapshot per run. PostgreSQL 17 runs through Docker Compose with a persistent named volume and health check.
 
 ## Raw data storage (Phase 2)
 
@@ -39,7 +39,9 @@ Set `THREATFLOW_NVD_API_KEY` optionally; credentials are sent in the `apiKey` he
 
 ## EPSS daily scores (Phase 5)
 
-The official [FIRST EPSS daily file](https://www.first.org/epss/data) is downloaded as a gzip CSV with `cve`, `epss`, and `percentile` columns. The complete original `.csv.gz` bytes are stored before decompression at `data/raw/epss/year=YYYY/month=MM/<sha256>.csv.gz` (or under `THREATFLOW_RAW_DATA_DIR`). The directory uses the **acquisition** month, while each database row uses the source **score date**. `epss_scores` uses `(cve_id, score_date)` as its primary key. Reprocessing updates corrected values for that date and keeps other dates and missing CVEs.
+The official [FIRST EPSS daily file](https://www.first.org/epss/data) is downloaded as a gzip CSV with `cve`, `epss`, and `percentile` columns. The complete original `.csv.gz` bytes are stored before decompression at `data/raw/epss/year=YYYY/month=MM/<sha256>.csv.gz` (or under `THREATFLOW_RAW_DATA_DIR`). The directory uses the **acquisition** month, while each database row uses the source **score date**.
+
+EPSS uses three database layers. `epss_current` keeps one latest row per CVE for fast joins and scoring. `epss_scores` keeps detailed daily rows for the most recent 30 inclusive score dates by default; configure this with `THREATFLOW_EPSS_HISTORY_RETENTION_DAYS`. `epss_daily_summaries` keeps one compact aggregate row per score date indefinitely. A successful ingestion atomically upserts the detail, current state, and summary, then prunes expired detail. Reprocessing updates corrected values for a date, recalculates its complete summary, and never regresses `epss_current` when an older backfill runs. Immutable raw gzip files are not pruned and remain the recovery source.
 
 Set PostgreSQL credentials and, if needed, `THREATFLOW_RAW_DATA_DIR`, `THREATFLOW_HTTP_CONNECT_TIMEOUT`, `THREATFLOW_HTTP_READ_TIMEOUT`, and `THREATFLOW_HTTP_RETRIES` in `.env`. Apply the existing migration to your local database before manual ingestion. Run current ingestion with:
 
@@ -83,12 +85,22 @@ Use `nvd_mode=modified` to recover changes. Each source runs as one bounded task
 
 On a failed DAG, inspect the task log in the UI, fix the source or configuration issue, then clear the failed task to rerun it. Task logs include `stage=...` markers for input validation, source fetch, NVD chunks and checkpoints, and completion. They persist in the `airflow_logs` volume and are shared by the scheduler and API server. If the UI is unavailable, find them with `docker compose exec airflow-scheduler find /opt/airflow/logs -type f -name '*.log'` and inspect one with `docker compose exec airflow-scheduler tail -n 200 <log-path>`. HTTP 429 is retried with bounded backoff in the client and then by Airflow; check the NVD API key and allow the source quota to recover. For a missed NVD interval, run a `modified` backfill for the exact dates in chunks no longer than 31 days. For missed EPSS scores, backfill the missing score dates. Check task success and fetched/written counts in logs; a zero `written` count can be valid for an unchanged NVD or CISA snapshot.
 
+Run bounded Airflow cleanup from an external scheduler (for example, weekly cron) after taking the normal database backup:
+
+```sh
+docker compose --profile maintenance run --rm airflow-maintenance
+```
+
+This keeps Airflow task metadata and local task logs for 90 days and XCom rows for 30 days. Override the database windows with `THREATFLOW_AIRFLOW_METADATA_RETENTION_DAYS` and `THREATFLOW_AIRFLOW_XCOM_RETENTION_DAYS`; the metadata setting also controls the log-file window. The command permanently removes expired operational data and does not touch application tables, immutable raw artifacts, or Docker volumes. NVD and CISA normalized current-state rows and all immutable raw artifacts are retained indefinitely.
+
 Verify application rows in PostgreSQL:
 
 ```sql
 SELECT count(*), max(last_modified) FROM nvd_cves;
 SELECT count(*), max(date_added) FROM cisa_kev_vulnerabilities;
 SELECT score_date, count(*) FROM epss_scores GROUP BY score_date ORDER BY score_date DESC LIMIT 7;
+SELECT count(*), max(score_date) FROM epss_current;
+SELECT * FROM epss_daily_summaries ORDER BY score_date DESC LIMIT 7;
 ```
 
 Run unit tests with `uv run python -m pytest tests/unit tests/airflow`. Run isolated PostgreSQL integration tests with `uv run python -m pytest tests/integration` while Docker is available. The Airflow image can parse DAGs with `docker compose exec airflow-scheduler airflow dags list-import-errors`.

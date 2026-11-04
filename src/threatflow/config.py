@@ -1,6 +1,6 @@
 """Environment-backed application settings."""
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     nvd_api_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     nvd_modified_lookback_hours: int = 48
     nvd_page_size: int = 2000
+    epss_history_retention_days: int = Field(default=30, ge=1)
+    airflow_metadata_retention_days: int = Field(default=90, ge=1)
+    airflow_xcom_retention_days: int = Field(default=30, ge=1)
     http_connect_timeout: float = 10
     http_read_timeout: float = 60
     http_retries: int = 3
