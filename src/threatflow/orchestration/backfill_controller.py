@@ -203,7 +203,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--interval-days", type=int, default=31)
     parser.add_argument("--chunk-days", type=int, default=7)
     parser.add_argument("--nvd-mode", choices=("published", "modified"), default="published")
-    parser.add_argument("--airflow-url", default="http://localhost:8080")
+    parser.add_argument(
+        "--airflow-url",
+        default=os.getenv("THREATFLOW_AIRFLOW_URL", "http://localhost:8080"),
+    )
     parser.add_argument("--username", default=os.getenv("AIRFLOW_ADMIN_USERNAME", "admin"))
     parser.add_argument("--password", default=os.getenv("AIRFLOW_ADMIN_PASSWORD"))
     parser.add_argument("--checkpoint", type=Path, default=Path("data/backfill-checkpoint.json"))

@@ -157,6 +157,30 @@ services:
     profiles:
       - maintenance
 
+  threatflow-cli:
+    <<: *airflow-common
+    entrypoint:
+      - bash
+      - /opt/airflow/scripts/threatflow-cli.sh
+    command:
+      - help
+    environment:
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?Set AIRFLOW_ADMIN_PASSWORD in .env}
+      THREATFLOW_AIRFLOW_URL: http://airflow-api-server:8080
+      THREATFLOW_POSTGRES_HOST: postgres
+      THREATFLOW_POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
+      THREATFLOW_RAW_DATA_DIR: /opt/threatflow/data/raw
+    volumes:
+      - ./airflow/scripts:/opt/airflow/scripts:ro
+      - ./data:/opt/threatflow/data
+    depends_on:
+      airflow-api-server:
+        condition: service_healthy
+    restart: 'no'
+    profiles:
+      - cli
+
 volumes:
   postgres_data:
   airflow_logs:

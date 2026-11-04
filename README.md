@@ -97,6 +97,19 @@ uv run --env-file .env threatflow-backfill-range --sources nvd epss --start 2021
 
 The default outer interval is 31 inclusive days and the NVD request chunk is seven days. Configure them with `--interval-days` and `--chunk-days`. The default checkpoint is `data/backfill-checkpoint.json`, which is ignored by Git and contains no credentials. Deterministic Airflow run IDs make recovery safe if the controller exits after submission. Use a different `--checkpoint` path for a different plan. Only one process may use a checkpoint at a time. For remote Airflow, set `--airflow-url` and `--username`; pass the password through `AIRFLOW_ADMIN_PASSWORD`, not the command line or shell history.
 
+The same controller can run without a host Python environment through the one-shot Compose CLI service. It uses the exact application runtime installed in the Airflow image, reaches Airflow over the internal Compose network, and mounts `./data` so checkpoints and raw artifacts persist on the host:
+
+```sh
+docker compose run --rm threatflow-cli backfill \
+  --sources nvd epss \
+  --start 2021-04-14 \
+  --end 2026-11-03 \
+  --nvd-mode modified \
+  --checkpoint /opt/threatflow/data/full-backfill.json
+```
+
+Preview the plan safely by adding `--dry-run`. The service is in the `cli` profile and is created only for the duration of `docker compose run`; it is not a permanently running service.
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh
@@ -109,6 +122,12 @@ Build the normalized change history from already downloaded valid snapshots with
 
 ```sh
 uv run --env-file .env threatflow-build-cisa-changes
+```
+
+Or rebuild with the same one-shot container runtime:
+
+```sh
+docker compose run --rm threatflow-cli rebuild-cisa-changes
 ```
 
 `cisa_kev_changes` stores a `baseline` event for every CVE in the first available Git snapshot, then only `added`, `modified`, and `removed` events. `changed_fields`, `previous_values`, and `current_values` are JSONB. Rebuilding is atomic and idempotent: the derived table is replaced in one transaction while immutable raw snapshots remain unchanged.
