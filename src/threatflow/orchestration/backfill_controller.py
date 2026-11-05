@@ -10,7 +10,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -19,7 +19,6 @@ import httpx
 from threatflow.orchestration.date_windows import date_chunks
 
 DAG_ID = "threat_intel_backfill"
-TERMINAL_STATES = {"success", "failed"}
 
 
 @dataclass(frozen=True)
@@ -119,7 +118,7 @@ def validate_plan(plan: BackfillPlan) -> None:
         raise ValueError("EPSS archive starts on 2021-04-14")
 
 
-def _run_id(plan: BackfillPlan, window: BackfillWindow) -> str:
+def backfill_run_id(plan: BackfillPlan, window: BackfillWindow) -> str:
     return f"range-{plan.identity()}-{window.start:%Y%m%d}-{window.end:%Y%m%d}"
 
 
@@ -132,13 +131,30 @@ def _read_checkpoint(path: Path, plan: BackfillPlan) -> set[str]:
     return set(data.get("completed_run_ids", []))
 
 
-def _write_checkpoint(path: Path, plan: BackfillPlan, completed: set[str]) -> None:
+def _write_checkpoint(
+    path: Path,
+    plan: BackfillPlan,
+    completed: set[str],
+    *,
+    active_run_id: str | None = None,
+    active_window: BackfillWindow | None = None,
+    active_state: str | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps({"plan": plan.serializable(), "completed_run_ids": sorted(completed)}, indent=2)
-        + "\n"
-    )
+    payload: dict[str, object] = {
+        "plan": plan.serializable(),
+        "completed_run_ids": sorted(completed),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if active_run_id is not None and active_window is not None and active_state is not None:
+        payload["active"] = {
+            "run_id": active_run_id,
+            "start": active_window.start.isoformat(),
+            "end": active_window.end.isoformat(),
+            "state": active_state,
+        }
+    temporary.write_text(json.dumps(payload, indent=2) + "\n")
     temporary.replace(path)
 
 
@@ -162,7 +178,7 @@ def execute_plan(
         completed = _read_checkpoint(checkpoint, plan)
         windows = plan.windows()
         for number, window in enumerate(windows, start=1):
-            run_id = _run_id(plan, window)
+            run_id = backfill_run_id(plan, window)
             if run_id in completed:
                 print(
                     f"[{number}/{len(windows)}] already complete {window.start}..{window.end}",
@@ -177,19 +193,35 @@ def execute_plan(
                 "chunk_days": plan.chunk_days,
             }
             print(f"[{number}/{len(windows)}] trigger {window.start}..{window.end}", file=output)
+            _write_checkpoint(
+                checkpoint,
+                plan,
+                completed,
+                active_run_id=run_id,
+                active_window=window,
+                active_state="submitting",
+            )
             airflow.trigger(run_id, configuration)
             deadline = time.monotonic() + run_timeout_seconds
             while True:
                 state = airflow.state(run_id)
-                if state in TERMINAL_STATES:
+                if state == "success":
+                    completed.add(run_id)
+                    _write_checkpoint(checkpoint, plan, completed)
                     break
+                _write_checkpoint(
+                    checkpoint,
+                    plan,
+                    completed,
+                    active_run_id=run_id,
+                    active_window=window,
+                    active_state=state,
+                )
+                if state == "failed":
+                    raise RuntimeError(f"Airflow run {run_id} finished with state={state}")
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"Airflow run {run_id} did not finish before timeout")
                 time.sleep(poll_seconds)
-            if state != "success":
-                raise RuntimeError(f"Airflow run {run_id} finished with state={state}")
-            completed.add(run_id)
-            _write_checkpoint(checkpoint, plan, completed)
             print(f"[{number}/{len(windows)}] success {window.start}..{window.end}", file=output)
 
 

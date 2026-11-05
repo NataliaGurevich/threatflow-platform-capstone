@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 threatflow-backfill-range = "threatflow.orchestration.backfill_controller:main"
+threatflow-backfill-status = "threatflow.orchestration.backfill_status:main"
 threatflow-build-cisa-changes = "threatflow.derivations.cisa_changes:main"
 
 [dependency-groups]

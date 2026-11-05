@@ -110,6 +110,16 @@ docker compose run --rm threatflow-cli backfill \
 
 Preview the plan safely by adding `--dry-run`. The service is in the `cli` profile and is created only for the duration of `docker compose run`; it is not a permanently running service.
 
+Inspect the local checkpoint without contacting Airflow or PostgreSQL:
+
+```sh
+docker compose run --rm --no-deps threatflow-cli backfill-status \
+  --checkpoint /opt/threatflow/data/backfill-checkpoint.json \
+  --stall-after-minutes 30
+```
+
+The command reports `RUNNING`, `STALLED`, `FAILED`, `COMPLETED`, or `UNKNOWN`, plus completed and remaining windows. Exit code `0` means running or completed, `1` means failed, and `2` means stalled, unknown, or invalid input. `--no-deps` is intentional: checkpoint inspection must remain available when Airflow or PostgreSQL is unavailable. Rebuild the `threatflow-cli` image after changing application code.
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh

@@ -90,7 +90,10 @@ def test_execute_is_sequential_and_resumes(tmp_path, monkeypatch):
     assert len(airflow.triggered) == 2
     assert airflow.triggered[0][1]["start_date"] == "2026-01-01"
     assert airflow.triggered[1][1]["end_date"] == "2026-03-03"
-    assert len(json.loads(checkpoint.read_text())["completed_run_ids"]) == 2
+    saved_checkpoint = json.loads(checkpoint.read_text())
+    assert len(saved_checkpoint["completed_run_ids"]) == 2
+    assert "active" not in saved_checkpoint
+    assert saved_checkpoint["updated_at"].endswith("+00:00")
 
     resumed = FakeAirflow()
     execute_plan(plan(), resumed, checkpoint, poll_seconds=0, output=io.StringIO())
@@ -98,10 +101,14 @@ def test_execute_is_sequential_and_resumes(tmp_path, monkeypatch):
 
 
 def test_failure_stops_before_next_window(tmp_path):
+    checkpoint = tmp_path / "checkpoint.json"
     airflow = FakeAirflow(["failed"])
     with pytest.raises(RuntimeError, match="state=failed"):
-        execute_plan(plan(), airflow, tmp_path / "checkpoint.json", output=io.StringIO())
+        execute_plan(plan(), airflow, checkpoint, output=io.StringIO())
     assert len(airflow.triggered) == 1
+    saved_checkpoint = json.loads(checkpoint.read_text())
+    assert saved_checkpoint["active"]["state"] == "failed"
+    assert saved_checkpoint["completed_run_ids"] == []
 
 
 def test_checkpoint_cannot_be_reused_for_different_plan(tmp_path):
