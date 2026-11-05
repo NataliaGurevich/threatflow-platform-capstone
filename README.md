@@ -165,6 +165,21 @@ docker compose run --rm threatflow-cli rebuild-cisa-changes
 
 On a failed DAG, inspect the task log in the UI, fix the source or configuration issue, then clear the failed task to rerun it. Task logs include `stage=...` markers for input validation, source fetch, NVD chunks and checkpoints, and completion. They persist in the `airflow_logs` volume and are shared by the scheduler and API server. If the UI is unavailable, find them with `docker compose exec airflow-scheduler find /opt/airflow/logs -type f -name '*.log'` and inspect one with `docker compose exec airflow-scheduler tail -n 200 <log-path>`. HTTP 429 is retried with bounded backoff in the client and then by Airflow; check the NVD API key and allow the source quota to recover. For a missed NVD interval, run a `modified` backfill for the exact dates in chunks no longer than 31 days. For missed EPSS scores, backfill the missing score dates. Check task success and fetched/written counts in logs; a zero `written` count can be valid for an unchanged NVD or CISA snapshot.
 
+Create local custom-format PostgreSQL backups for the application and Metabase databases with:
+
+```sh
+./scripts/backup-databases.sh
+```
+
+The script reads the application database name from the running PostgreSQL container,
+uses `metabase` by default for the Metabase database, validates each dump with
+`pg_restore --list`, and writes a SHA-256 checksum next to it in `data/backups`.
+Set `METABASE_DB_NAME` or `THREATFLOW_BACKUP_DIR` in the shell to override those two
+defaults. The script does not back up raw artifacts, Airflow metadata, or the Metabase
+encryption key; it also does not upload or delete backups. Keep
+`MB_ENCRYPTION_SECRET_KEY` separately in a password manager and copy verified backups
+to storage outside the development machine.
+
 Run bounded Airflow cleanup from an external scheduler (for example, weekly cron) after taking the normal database backup:
 
 ```sh
