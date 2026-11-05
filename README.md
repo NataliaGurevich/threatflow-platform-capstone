@@ -120,6 +120,23 @@ docker compose run --rm --no-deps threatflow-cli backfill-status \
 
 The command reports `RUNNING`, `STALLED`, `FAILED`, `COMPLETED`, or `UNKNOWN`, plus completed and remaining windows. Exit code `0` means running or completed, `1` means failed, and `2` means stalled, unknown, or invalid input. `--no-deps` is intentional: checkpoint inspection must remain available when Airflow or PostgreSQL is unavailable. Rebuild the `threatflow-cli` image after changing application code.
 
+## Dashboard query prototype
+
+`analytics/threatflow_overview.sql` contains independent read-only queries for an initial
+overview dashboard: source counts and freshness, NVD severity and publication trends,
+CISA KEV additions and EPSS risk, the highest-risk KEV records, and CVSS coverage. Run
+all queries against the local application database with:
+
+```sh
+docker compose exec -T postgres sh -c \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  < analytics/threatflow_overview.sql
+```
+
+The SQL file starts an explicit read-only transaction and does not create views, tables,
+or other database objects. Each numbered `SELECT` can later be copied into one dashboard
+panel.
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh
