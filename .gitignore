@@ -39,6 +39,8 @@ build/
 
 # Documentation / temporary files
 *.md
+!docs/cli-commands.md
+!docs/cli-commands.en.md
 *.tmp
 *.swp
 

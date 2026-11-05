@@ -120,6 +120,10 @@ docker compose run --rm --no-deps threatflow-cli backfill-status \
 
 The command reports `RUNNING`, `STALLED`, `FAILED`, `COMPLETED`, or `UNKNOWN`, plus completed and remaining windows. Exit code `0` means running or completed, `1` means failed, and `2` means stalled, unknown, or invalid input. `--no-deps` is intentional: checkpoint inspection must remain available when Airflow or PostgreSQL is unavailable. Rebuild the `threatflow-cli` image after changing application code.
 
+CLI command references with important options, exit codes, and safety notes are
+available in [Russian](docs/cli-commands.md) and
+[English](docs/cli-commands.en.md).
+
 ## Dashboard query prototype
 
 `analytics/threatflow_overview.sql` contains independent read-only queries for an initial
