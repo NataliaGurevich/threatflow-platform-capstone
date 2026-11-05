@@ -168,15 +168,15 @@ On a failed DAG, inspect the task log in the UI, fix the source or configuration
 Create local custom-format PostgreSQL backups for the application and Metabase databases with:
 
 ```sh
-./scripts/backup-databases.sh
+docker compose run --rm --no-deps threatflow-cli backup-databases
 ```
 
-The script reads the application database name from the running PostgreSQL container,
+The one-shot CLI reads PostgreSQL connection settings from the existing environment,
 uses `metabase` by default for the Metabase database, validates each dump with
 `pg_restore --list`, and writes a SHA-256 checksum next to it in `data/backups`.
-Set `METABASE_DB_NAME` or `THREATFLOW_BACKUP_DIR` in the shell to override those two
-defaults. The script does not back up raw artifacts, Airflow metadata, or the Metabase
-encryption key; it also does not upload or delete backups. Keep
+`--no-deps` keeps this command independent from Airflow, but the PostgreSQL service must
+already be running. The command does not back up raw artifacts, Airflow metadata, or the
+Metabase encryption key; it also does not upload or delete backups. Keep
 `MB_ENCRYPTION_SECRET_KEY` separately in a password manager and copy verified backups
 to storage outside the development machine.
 

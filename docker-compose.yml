@@ -224,6 +224,7 @@ services:
       AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?Set AIRFLOW_ADMIN_PASSWORD in .env}
       THREATFLOW_AIRFLOW_URL: http://airflow-api-server:8080
+      THREATFLOW_BACKUP_DIR: /opt/threatflow/data/backups
       THREATFLOW_POSTGRES_HOST: postgres
       THREATFLOW_POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
       THREATFLOW_RAW_DATA_DIR: /opt/threatflow/data/raw
