@@ -180,6 +180,17 @@ encryption key; it also does not upload or delete backups. Keep
 `MB_ENCRYPTION_SECRET_KEY` separately in a password manager and copy verified backups
 to storage outside the development machine.
 
+Preview database dumps older than the 14-day local retention window with:
+
+```sh
+./scripts/report-expired-database-backups.sh
+```
+
+This command is read-only: it reports expired `.dump` files and their associated
+checksums but never deletes them. Override the reporting window with
+`THREATFLOW_BACKUP_RETENTION_DAYS` or the directory with
+`THREATFLOW_BACKUP_DIR` in the shell.
+
 Run bounded Airflow cleanup from an external scheduler (for example, weekly cron) after taking the normal database backup:
 
 ```sh
