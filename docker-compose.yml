@@ -47,6 +47,31 @@ services:
       timeout: 5s
       retries: 10
 
+  metabase-db-init:
+    image: postgres:17
+    environment:
+      PGHOST: postgres
+      PGUSER: ${THREATFLOW_POSTGRES_USER:-threatflow}
+      PGPASSWORD: ${THREATFLOW_POSTGRES_PASSWORD:?Set THREATFLOW_POSTGRES_PASSWORD in .env}
+      PGDATABASE: postgres
+
+      THREATFLOW_POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
+
+      METABASE_DB_NAME: ${METABASE_DB_NAME:-metabase}
+      METABASE_DB_USER: ${METABASE_DB_USER:-metabase_user}
+      METABASE_DB_PASSWORD: ${METABASE_DB_PASSWORD:?Set METABASE_DB_PASSWORD in .env}
+
+      THREATFLOW_ANALYTICS_USER: ${THREATFLOW_ANALYTICS_USER:-threatflow_analytics}
+      THREATFLOW_ANALYTICS_PASSWORD: ${THREATFLOW_ANALYTICS_PASSWORD:?Set THREATFLOW_ANALYTICS_PASSWORD in .env}
+    volumes:
+      - ./postgres/init-metabase.sh:/opt/threatflow/init-metabase.sh:ro
+    command:
+      - sh
+      - /opt/threatflow/init-metabase.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
   airflow-db-init:
     image: postgres:17
     environment:
