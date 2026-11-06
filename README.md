@@ -169,6 +169,17 @@ create database objects or modify application data.
 series, a previous-seven-day baseline, and explicit 5% warning / 20% critical deviation
 signals for the Data Quality & Reliability volume chart.
 
+`analytics/data_quality_overall_status.sql` combines eight non-informational health
+signals into the dashboard's read-only Overall Status KPI. Cross-source coverage is
+excluded from this status because source scope differences are not automatic failures.
+`analytics/data_quality_freshness_issues.sql` returns the number of NVD, CISA KEV, and
+EPSS sources currently at WARNING or CRITICAL freshness for a scalar KPI card.
+`analytics/data_quality_missing_epss_dates_kpi.sql` returns the internal gap count for
+the latest 90 covered EPSS dates as a scalar KPI; source publication lag remains covered
+by the separate freshness checks.
+`analytics/data_quality_integrity_issues.sql` returns the combined normalized-value,
+EPSS summary-consistency, and raw-manifest rule violation count for the final scalar KPI.
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh
