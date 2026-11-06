@@ -141,6 +141,14 @@ The SQL file starts an explicit read-only transaction and does not create views,
 or other database objects. Each numbered `SELECT` can later be copied into one dashboard
 panel.
 
+The next analytical step is the explainable
+[Vulnerability Priority Queue](docs/vulnerability-prioritization.en.md). Its standalone
+read-only query is in `analytics/vulnerability_priority_queue.sql` and combines CISA KEV,
+current and seven-day EPSS signals, and NVD CVSS without claiming organisational exposure.
+The same dashboard also uses `analytics/vulnerability_priority_summary.sql`,
+`analytics/rising_epss_watchlist.sql`, and `analytics/ransomware_related_kev.sql` for its
+summary, rising-risk watchlist, and ransomware-related KEV cards.
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh

@@ -41,6 +41,7 @@ build/
 *.md
 !docs/cli-commands.md
 !docs/cli-commands.en.md
+!docs/vulnerability-prioritization.en.md
 *.tmp
 *.swp
 
