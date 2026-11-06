@@ -149,6 +149,26 @@ The same dashboard also uses `analytics/vulnerability_priority_summary.sql`,
 `analytics/rising_epss_watchlist.sql`, and `analytics/ransomware_related_kev.sql` for its
 summary, rising-risk watchlist, and ransomware-related KEV cards.
 
+The read-only Data Quality & Reliability dashboard starts with
+`analytics/data_quality_source_freshness.sql`. It reports one row per source and uses
+the NVD durable coverage checkpoint, the last normalized CISA catalog update, and the
+latest EPSS score date as source-specific freshness signals.
+`analytics/data_quality_epss_missing_dates.sql` checks the latest 90 covered EPSS dates
+for internal gaps; trailing unpublished dates remain the responsibility of the freshness
+query. `analytics/data_quality_epss_summary_consistency.sql` recalculates retained EPSS
+detail aggregates and compares them with their daily summaries.
+`analytics/data_quality_cross_source_coverage.sql` reports directional CVE overlap among
+CISA KEV, NVD, and the latest EPSS score date without treating normal source differences
+as automatic failures. `analytics/data_quality_invalid_value_counts.sql` checks normalized
+identifiers, ranges, date ordering, required CISA text, and EPSS aggregate invariants.
+`analytics/data_quality_raw_artifact_health.sql` checks raw manifest invariants and reports
+retained invalid responses separately from metadata corruption. These queries do not
+create database objects or modify application data.
+
+`analytics/data_quality_epss_daily_volume.sql` provides the 90-day EPSS record-count
+series, a previous-seven-day baseline, and explicit 5% warning / 20% critical deviation
+signals for the Data Quality & Reliability volume chart.
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh
