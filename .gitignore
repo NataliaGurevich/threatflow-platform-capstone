@@ -42,10 +42,28 @@ build/
 !docs/*
 !docs/adr/
 !docs/adr/*.md
+!infra/README.md
 docs/for_me/
 
 *.tmp
 *.swp
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Reusable modules do not own dependency selections; the root module lock is committed.
+infra/modules/**/.terraform.lock.hcl
 
 # Agent
 AGENTS.md

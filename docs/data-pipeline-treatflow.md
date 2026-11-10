@@ -148,14 +148,17 @@ Partitioning should follow common query-time filters. Ingestion frequency alone
 does not justify a partition: a six-hour NVD run does not require hourly
 partitions.
 
+The accepted S3 Bronze design uses the source and exact-byte digest as stable object identity:
+
 ```text
-bronze/source=nvd/acquired_date=2026-11-06/hour=12/run_id=.../page=....json
-bronze/source=epss/acquired_date=2026-11-06/score_date=2026-11-06/....csv.gz
-bronze/source=cisa/acquired_date=2026-11-06/revision=.../....json
+bronze/source=nvd/sha256=<sha256>.json
+bronze/source=epss/sha256=<sha256>.csv.gz
+bronze/source=cisa_kev/sha256=<sha256>.json
 ```
 
-Bronze paths describe acquisition and support replay. Silver uses source-effective
-dates:
+Acquisition time, request interval, score date, source revision and page offset remain in the
+searchable manifest instead of producing duplicate keys for identical bytes. Silver uses
+source-effective dates:
 
 | Dataset | Partition strategy | Reason |
 | --- | --- | --- |

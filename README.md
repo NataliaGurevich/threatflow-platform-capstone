@@ -24,6 +24,7 @@ The capstone evidence is organised here:
 - [5–10 minute presentation script](docs/presentation-script.md)
 - [Implemented and target architecture](docs/data-pipeline-treatflow.md)
 - [S3 Bronze storage decision](docs/adr/0001-s3-bronze-storage.md)
+- [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
 
 Run the fixture-based local verification without external API calls or changes to the

@@ -138,7 +138,8 @@ use disposable containers; read-only analytical mode uses the already-running lo
 ## Limitations and future improvements
 
 - Add asset inventory and product matching before making organisation-specific claims.
-- Complete the backend-neutral Raw storage interface before S3 migration.
+- Implement the S3 `RawArtifactStore` adapter and reconcile it against the implemented local
+  backend; the backend-neutral interface and Terraform Bronze module are already present.
 - Move large historical analytical storage to Parquet/Iceberg only after the local capstone
   is fully demonstrated and cost/volume measurements justify it.
 - Add CI execution of lint/unit tests and an environment with Docker for integration and
