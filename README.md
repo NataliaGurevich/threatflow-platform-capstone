@@ -63,7 +63,7 @@ Run unit and isolated PostgreSQL 17 Testcontainers tests with `uv run pytest -v`
 
 ## Airflow orchestration
 
-Airflow 3.1.0 uses LocalExecutor and a separate `airflow` PostgreSQL database. The application still owns HTTP requests, validation, raw artifacts, transactions, and upserts. The Airflow image installs `threatflow` in a separate Python environment because Airflow pins SQLAlchemy 1.4 while the application uses SQLAlchemy 2; ingestion tasks use `ExternalPythonOperator`. The three daily DAGs run at 03:00 NVD, 04:00 CISA, and 06:00 EPSS UTC; `threat_intel_backfill` is manual. Each ingestion task uses a one-slot source pool shared by daily and backfill. DAG schedules are set in the DAG files.
+Airflow 3.1.0 uses LocalExecutor and a separate `airflow` PostgreSQL database. The application still owns HTTP requests, validation, raw artifacts, transactions, and upserts. The Airflow image installs `threatflow` in a separate Python environment because Airflow pins SQLAlchemy 1.4 while the application uses SQLAlchemy 2; ingestion tasks use `ExternalPythonOperator`. The three daily DAGs run at 03:00 NVD, 04:00 CISA, and 06:00 EPSS UTC; the additive `cisa_watcher_hourly` runs at the start of every UTC hour; `threat_intel_backfill` is manual. Each ingestion task uses a one-slot source pool shared by daily, watcher, and backfill. DAG schedules are set in the DAG files.
 
 Copy `.env.example` to `.env`, set `THREATFLOW_POSTGRES_PASSWORD` and `AIRFLOW_ADMIN_PASSWORD`, and generate a persistent `AIRFLOW_JWT_SECRET` (for example, `openssl rand -hex 32`). Airflow components must share this secret to validate login tokens. Then start; application and Airflow metadata migrations run automatically before the long-running services:
 
@@ -180,6 +180,12 @@ by the separate freshness checks.
 `analytics/data_quality_integrity_issues.sql` returns the combined normalized-value,
 EPSS summary-consistency, and raw-manifest rule violation count for the final scalar KPI.
 
+The read-only Vulnerability Search dashboard uses one required free-text filter across
+five cards in `analytics/vulnerability_search_*.sql`. It searches CVE IDs and descriptive
+NVD/CISA fields, then enriches the matched set with current EPSS without scanning the
+large EPSS history table. Setup and click-through instructions are in
+[`docs/vulnerability-search.md`](docs/vulnerability-search.md).
+
 For a CISA-only Git history backfill, use yearly outer windows to reduce GitHub API calls. `THREATFLOW_GITHUB_TOKEN` is optional but recommended for authenticated rate limits:
 
 ```sh
@@ -203,6 +209,30 @@ docker compose run --rm threatflow-cli rebuild-cisa-changes
 `cisa_kev_changes` stores a `baseline` event for every CVE in the first available Git snapshot, then only `added`, `modified`, and `removed` events. `changed_fields`, `previous_values`, and `current_values` are JSONB. Rebuilding is atomic and idempotent: the derived table is replaced in one transaction while immutable raw snapshots remain unchanged.
 
 `cisa_daily` also maintains this table incrementally. A new validated content hash is compared with the previous valid raw snapshot; its `added`, `modified`, and `removed` events, raw manifest observation, and current-state UPSERT are committed in one database transaction. Daily events use `revision_type=content_sha256`, while Git history uses `revision_type=git_commit`. An identical daily snapshot creates no duplicate events. The full rebuild command remains the recovery tool and reconstructs both Git-derived and daily history from immutable raw files.
+
+An optional one-shot CISA watcher downloads the catalog once, stores the exact bytes in
+the existing local content-addressed Raw storage, and creates an in-process
+`CisaArtifactObserved` event. A separate handler verifies that the file still matches the
+event hash and invokes the same validated ingestion service only when the hash has not
+already been processed as a daily snapshot:
+
+```sh
+uv run --env-file .env threatflow-watch-cisa
+# or with the Compose application runtime
+docker compose run --rm threatflow-cli watch-cisa
+```
+
+The current event delivery is synchronous and local; no queue or AWS service is required.
+The pointer-only event contract can later carry an S3 object identity through SQS without
+changing the comparison and ingestion boundary. This is additive functionality:
+`cisa_daily` remains enabled as the scheduled recovery
+path, and CISA Git history backfill remains unchanged. Concurrent watcher and daily runs
+are safe because Raw manifests, change events, and current-state writes are idempotent.
+Invalid new content still fails normal CISA validation and does not update current state.
+Airflow runs this command automatically through `cisa_watcher_hourly` at
+`0 * * * *` UTC. The DAG has `catchup=False`, `max_active_runs=1`, and shares the
+one-slot `cisa_api_pool` with `cisa_daily` and CISA backfill, so those HTTP paths
+do not run concurrently inside Airflow.
 
 ### Operational Runbook
 
