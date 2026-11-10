@@ -1,6 +1,39 @@
 # ThreatFlow
 
-ThreatFlow is a cybersecurity intelligence data engineering platform for CISA KEV, NVD, and EPSS. Work is being delivered in phases; this foundation establishes configuration, database models, and the initial migration only.
+ThreatFlow is a cybersecurity intelligence data engineering capstone for CISA KEV, NVD,
+and EPSS. The implemented local platform provides reproducible ingestion, immutable Raw
+artifacts, PostgreSQL current/history/control tables, Airflow orchestration, data-quality
+checks, recovery paths, analytical SQL, and Metabase dashboards. The AWS lakehouse material
+is a documented future evolution, not a claim about the current deployment.
+
+## Capstone overview
+
+ThreatFlow's primary user is a vulnerability-management, SOC, or threat-intelligence
+analyst. Its main data product is an explainable investigation queue answering which CVEs
+should be reviewed first—if the affected products are present in the organisation—using
+NVD severity/context, CISA confirmed exploitation, and FIRST EPSS probability/trend.
+
+The capstone evidence is organised here:
+
+- [Unified capstone report](docs/capstone-report.md)
+- [Candidate dataset assessment and selection](docs/dataset-assessment.md)
+- [Data catalog](docs/data-catalog.md)
+- [ER diagram and data model](docs/data-model.md)
+- [Governance, security, privacy, and retention](docs/governance.md)
+- [Failure and recovery demonstration](docs/failure-recovery-demo.md)
+- [5–10 minute presentation script](docs/presentation-script.md)
+- [Implemented and target architecture](docs/data-pipeline-treatflow.md)
+- [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
+
+Run the fixture-based local verification without external API calls or changes to the
+development database:
+
+```sh
+./scripts/run-capstone-demo.sh
+```
+
+If the local Compose stack is already running and contains ingested data, add
+`--with-running-stack` to execute the priority and data-quality SQL in read-only mode.
 
 The source schema has `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`. EPSS also has the derived `epss_current` and `epss_daily_summaries` tables. The separate `ingestion_checkpoints` table stores operational NVD coverage. NVD and CISA retain the latest ingested state per CVE, not a full database snapshot per run. PostgreSQL 17 runs through Docker Compose with a persistent named volume and health check.
 
@@ -121,8 +154,8 @@ docker compose run --rm --no-deps threatflow-cli backfill-status \
 The command reports `RUNNING`, `STALLED`, `FAILED`, `COMPLETED`, or `UNKNOWN`, plus completed and remaining windows. Exit code `0` means running or completed, `1` means failed, and `2` means stalled, unknown, or invalid input. `--no-deps` is intentional: checkpoint inspection must remain available when Airflow or PostgreSQL is unavailable. Rebuild the `threatflow-cli` image after changing application code.
 
 CLI command references with important options, exit codes, and safety notes are
-available in [Russian](docs/cli-commands.md) and
-[English](docs/cli-commands.en.md).
+available in [Russian](docs/for_me/cli-commands.md) and
+[English](docs/for_me/cli-commands.en.md).
 
 ## Dashboard query prototype
 

@@ -49,3 +49,6 @@ AGENTS.md
 # data
 data/*
 data/*backfill-checkpoint.json*
+
+# docs
+docs/*

@@ -2,8 +2,7 @@
 
 ## Purpose
 
-This document designs a system from first principles and does not depend on a
-specific MVP implementation. The system regularly acquires public vulnerability
+The system regularly acquires public vulnerability
 data, retains history without loss, validates quality, correlates records by CVE,
 and turns them into information for prioritization and investigation.
 
@@ -24,7 +23,6 @@ The core questions are:
 | Security engineering | Which products, vendors, and weakness types recur? | Search, aggregation, and cross-source enrichment |
 | Incident response | What is currently known about a particular CVE? | A unified multi-source CVE record |
 | Security leadership | Is the data fresh and complete? | Freshness, coverage, and data-quality indicators |
-| Data engineering | Can a calculation be replayed and a gap recovered? | Raw history, checkpoints, lineage, and replay |
 
 The system supports triage and investigation. Without asset inventory, installed
 versions, external exposure, business criticality, and remediation status, it
@@ -110,30 +108,7 @@ Pipeline implications:
 EPSS has a natural daily cadence. Running more often than one successful full
 acquisition per day does not improve the data.
 
-## 3. What determines the ingestion schedule
-
-Schedules should not be arbitrary or identical across sources.
-
-| Factor | Effect |
-| --- | --- |
-| Publication cadence | New EPSS data cannot be acquired before daily publication; KEV changes irregularly |
-| Freshness requirement | A next-morning report supports daily batch; alerting may require more frequent KEV/NVD polling |
-| API limits | Constrain NVD window size, page size, and concurrency |
-| Volume and processing time | A new run must not overlap an unfinished run for the same source |
-| Cost | Frequent polling, compute, and warehouse queries may add cost without adding value |
-| Recovery objective | Less frequent checkpoints increase the replay interval after failure |
-| Downstream SLA | A dashboard required by 08:00 UTC defines the upstream deadline |
-
-Recommended baseline policy:
-
-- EPSS: one successful run per day after publication;
-- CISA KEV: daily polling for analytics or polling every few hours for alerts,
-  processing only changed content;
-- NVD: daily or several times per day using modification windows;
-- a separate gap detector verifies continuous coverage;
-- backfill is independent of daily jobs and shares source limits with them.
-
-## 4. Storage model
+## 3. Storage model
 
 One store does not need to solve audit, history, serving, and BI equally well.
 Separate logical layers are useful.
@@ -148,7 +123,7 @@ flowchart LR
     GOLD --> BI[Dashboards and analysis]
 ```
 
-### 4.1 Raw / Bronze
+### 3.1 Raw / Bronze
 
 Retains exact response bytes without modification: JSON, CSV.GZ, request
 parameters, HTTP metadata, acquisition time, source date, checksum, and pipeline
@@ -162,7 +137,7 @@ The Raw layer enables replay, audit, investigation of source defects, and
 re-normalization after parser changes. Objects are immutable, and identical
 content hashes may be deduplicated.
 
-### 4.2 Validated / Silver
+### 3.2 Validated / Silver
 
 Contains typed, cleaned history with source-specific metadata. Parquet
 partitioned by source date suits large history. It is more efficient than
@@ -195,7 +170,7 @@ With Apache Iceberg these can be hidden transforms such as
 partition by CVE ID, vendor, product, severity, or ransomware flag. Compact small
 outputs periodically; never create one file per CVE.
 
-### 4.3 Current state / Serving
+### 3.3 Current state / Serving
 
 A relational database suits the current CVE view, joins, filters, and low-latency
 dashboard queries:
@@ -208,7 +183,7 @@ dashboard queries:
 Writes use unique keys and conditional upserts. An older NVD version or EPSS date
 must not regress current state.
 
-### 4.4 Analytical / Gold
+### 3.4 Analytical / Gold
 
 Gold datasets answer specific questions instead of copying every Silver field:
 
@@ -222,53 +197,9 @@ Gold datasets answer specific questions instead of copying every Silver field:
 Gold may use materialized PostgreSQL tables at small scale or Parquet/Iceberg
 tables for multi-year analytics.
 
-## 5. Data processing
+## 4. Three pipeline options
 
-```mermaid
-flowchart LR
-    FETCH[Fetch with retries<br/>and rate limiting] --> STORE[Store exact bytes]
-    STORE --> STRUCTURE[Schema and parse validation]
-    STRUCTURE --> COMPLETE[Completeness and anomaly checks]
-    COMPLETE --> NORMALIZE[Normalize and deduplicate]
-    NORMALIZE --> HISTORY[Append versioned history]
-    HISTORY --> SERVE[Conditional current-state upsert]
-    HISTORY --> DERIVE[Build analytical datasets]
-    SERVE --> QUALITY[Freshness and quality checks]
-    DERIVE --> QUALITY
-    QUALITY --> PUBLISH[Publish only successful data]
-```
-
-### 5.1 Processing rules
-
-1. Store bytes before parsing or writing normalized data.
-2. Separate acquisition time, source effective time, and processing time.
-3. Validate completeness as well as schema.
-4. Deduplicate by business key and source version/date.
-5. Never update current state with an older version.
-6. Commit a checkpoint only after a complete successful transaction.
-7. Publish Gold atomically so BI never sees half of a new dataset.
-8. Quarantine retains invalid artifacts for investigation, while the run fails.
-9. Repeated runs are idempotent.
-10. Metrics distinguish fetched, validated, inserted, updated, unchanged, and rejected.
-
-### 5.2 Information produced
-
-An enriched CVE view combines distinct meanings:
-
-- CVSS: technical severity;
-- EPSS: probability of exploitation over the next 30 days;
-- KEV: confirmed exploitation;
-- ransomware flag: confirmed CISA context;
-- NVD modification history: changes in knowledge about a CVE;
-- asset context, when available: applicability to a specific organisation.
-
-Priority should be an explainable set of rules or features rather than an opaque
-combined score. KEV membership may outrank high CVSS without exploitation
-evidence, while EPSS trends reveal CVEs receiving rapidly increasing attention.
-
-## 6. Three pipeline options
-
-### 6.1 Option 1: existing MVP
+### 4.1 Option 1: existing MVP
 
 ```mermaid
 flowchart LR
@@ -293,7 +224,7 @@ operations are more expensive.
 analytics compete with ingestion in PostgreSQL; horizontal scaling, replay, and
 independent compute scaling are harder.
 
-### 6.2 Option 2: target event-driven lakehouse on AWS
+### 4.2 Option 2: target event-driven lakehouse on AWS
 
 ```mermaid
 flowchart LR
@@ -365,7 +296,7 @@ observability; cost and operational complexity exceed the MVP.
 **Choose when:** as the target when history, replay, reliability, and scaling are
 product requirements.
 
-### 6.3 Option 3: intermediate S3 batch
+### 4.3 Option 3: intermediate S3 batch
 
 ```mermaid
 flowchart LR
@@ -451,7 +382,7 @@ not solve large EPSS history as well as option B.
 This control flow is useful when new KEVs must enter processing faster than a
 daily batch. Kafka or Kinesis is unnecessary for infrequent CISA changes.
 
-## 7. Comparison and decision
+## 5. Comparison and decision
 
 | Criterion | 1: MVP | 3: intermediate | 2: target AWS |
 | --- | --- | --- | --- |
@@ -464,7 +395,7 @@ daily batch. Kafka or Kinesis is unnecessary for infrequent CISA changes.
 | Operational complexity | Low | Medium | High |
 | Best use | Validate the idea | Controlled migration | Scalable target system |
 
-### 7.1 Recommendation
+### 5.1 Recommendation
 
 Option 2 is the correct target for a scalable and reliable system. It retains the
 batch nature of NVD and EPSS, uses events where they add value, and separates
@@ -474,7 +405,7 @@ Kafka or Kinesis is unnecessary because these sources do not produce a continuou
 high-throughput stream. EventBridge routes, SQS buffers durably, and Airflow owns
 workflow dependencies, backfill, and recovery.
 
-### 7.2 Migration order
+### 5.2 Migration order
 
 Option 1 remains the best starting point, and option 3 reduces migration risk.
 Option 2 is the target because:
@@ -502,7 +433,7 @@ First move Raw to S3 and measure real file sizes and query patterns. Then add
 Parquet/Iceberg and Athena. Finally introduce S3 events/SQS and the CISA change
 message without rewriting the working ingestion services.
 
-## 8. Cloud mapping
+## 6. Cloud mapping
 
 The architecture should remain cloud-provider independent. One possible AWS
 mapping is:
@@ -525,7 +456,7 @@ This is a mapping, not a mandatory bundle. Managed orchestration and NAT can
 create disproportionate standing cost for an MVP. Local Docker Compose or one
 compute instance is simpler; S3 and RDS can be adopted incrementally.
 
-## 9. Terms and abbreviations
+## 7. Terms and abbreviations
 
 | Term | Expansion / explanation |
 | --- | --- |
@@ -560,26 +491,3 @@ compute instance is simpler; S3 and RDS can be adopted incrementally.
 | Iceberg | Table format over object storage with snapshots and schema evolution |
 | BI | Business Intelligence — dashboards and analytical reporting |
 
-## 10. Sources and verifiable assumptions
-
-- [NVD CVE API](https://nvd.nist.gov/developers/vulnerabilities) — modification
-  and publication windows, pagination, and API guidance.
-- [CISA KEV data repository](https://github.com/cisagov/kev-data) — official
-  JSON/CSV, schema, Git history, and update schedule.
-- [FIRST EPSS FAQ](https://www.first.org/epss/faq) — probability meaning, daily
-  cadence, and interpretation limits.
-- [Official EPSS score archive](https://github.com/empiricalsec/epss_scores) —
-  historical daily files, fields, and model-version transition dates.
-- [Amazon MWAA REST API](https://docs.aws.amazon.com/mwaa/latest/userguide/access-mwaa-apache-airflow-rest-api.html):
-  external triggering of Airflow DAG runs.
-- [Athena partitioning guidance](https://docs.aws.amazon.com/athena/latest/ug/ctas-partitioning-and-bucketing-what-is-partitioning.html)
-  and [data optimization](https://docs.aws.amazon.com/athena/latest/ug/performance-tuning-data-optimization-techniques.html):
-  partition selection and small-file control.
-- [Athena with AWS Glue Data Catalog](https://docs.aws.amazon.com/athena/latest/ug/data-sources-glue.html)
-  and [Apache Iceberg on AWS](https://docs.aws.amazon.com/prescriptive-guidance/latest/apache-iceberg-on-aws/getting-started.html):
-  catalog and transactional lakehouse tables.
-- [AWS messaging decision guide](https://docs.aws.amazon.com/decision-guides/latest/decision-guides/sns-or-sqs-or-eventbridge.html):
-  EventBridge/SQS roles and at-least-once delivery.
-
-API parameters, schemas, publication times, and cloud capabilities can change.
-Verify them against current official documentation before implementation.
