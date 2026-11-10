@@ -40,6 +40,8 @@ build/
 # Documentation / temporary files
 *.md
 !docs/*
+!docs/adr/
+!docs/adr/*.md
 docs/for_me/
 
 *.tmp

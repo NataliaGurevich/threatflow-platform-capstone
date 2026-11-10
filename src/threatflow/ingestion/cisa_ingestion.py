@@ -6,7 +6,6 @@ import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
 from sqlalchemy import create_engine, func, select
 
@@ -14,13 +13,12 @@ from threatflow.config import Settings
 from threatflow.derivations.cisa_changes import (
     calculate_changes,
     json_safe_record,
-    resolve_cisa_artifact_path,
 )
 from threatflow.ingestion.cisa_client import CisaClient, CisaGitHistoryClient
 from threatflow.ingestion.cisa_parser import parse_catalog
 from threatflow.models.cisa import CisaKevVulnerability
 from threatflow.models.raw_artifact import RawArtifact
-from threatflow.raw_storage import store_raw_artifact
+from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
 from threatflow.repository.cisa_change_repository import upsert_changes
 from threatflow.repository.cisa_repository import upsert_records
 from threatflow.repository.raw_artifact_repository import record_artifact
@@ -53,9 +51,13 @@ class CisaHistoryResult:
 
 
 def ingest_cisa_kev(
-    *, client: CisaClient | None = None, settings: Settings | None = None
+    *,
+    client: CisaClient | None = None,
+    settings: Settings | None = None,
+    raw_store: RawArtifactStore | None = None,
 ) -> IngestionResult:
     settings = settings or Settings()
+    raw_store = raw_store or create_raw_artifact_store(settings)
     acquired_at = datetime.now(UTC)
     LOGGER.info("CISA KEV ingestion started", extra={"source": "cisa_kev"})
     content = (
@@ -66,9 +68,7 @@ def ingest_cisa_kev(
             retries=settings.http_retries,
         )
     ).fetch()
-    artifact = store_raw_artifact(
-        "cisa_kev", content, acquired_at, ".json", raw_data_dir=settings.raw_data_dir
-    )
+    artifact = raw_store.store("cisa_kev", content, acquired_at, ".json")
     records = parse_catalog(content)
     engine = create_engine(settings.database_url)
     try:
@@ -118,12 +118,11 @@ def ingest_cisa_kev(
                 if known_artifact is None:
                     previous = None
                     if previous_artifact is not None:
-                        previous_path = resolve_cisa_artifact_path(
-                            previous_artifact.storage_path, Path(settings.raw_data_dir)
-                        )
                         previous = {
                             record["cve_id"]: json_safe_record(record)
-                            for record in parse_catalog(previous_path.read_bytes())
+                            for record in parse_catalog(
+                                raw_store.read(previous_artifact.storage_path)
+                            )
                         }
                     current = {record["cve_id"]: json_safe_record(record) for record in records}
                     changes = calculate_changes(
@@ -139,7 +138,7 @@ def ingest_cisa_kev(
         result = IngestionResult(
             "cisa_kev",
             acquired_at,
-            str(artifact.path),
+            artifact.uri,
             artifact.sha256,
             len(content),
             len(records),
@@ -159,11 +158,13 @@ def backfill_cisa_kev(
     *,
     client: CisaGitHistoryClient | None = None,
     settings: Settings | None = None,
+    raw_store: RawArtifactStore | None = None,
 ) -> CisaHistoryResult:
     """Store validated official Git snapshots without regressing the current-state table."""
     if start_date > end_date:
         raise ValueError("CISA history start must not be after end")
     settings = settings or Settings()
+    raw_store = raw_store or create_raw_artifact_store(settings)
     token = settings.github_token.get_secret_value() if settings.github_token else None
     client = client or CisaGitHistoryClient(
         token=token,
@@ -192,9 +193,7 @@ def backfill_cisa_kev(
             for attempt in range(settings.http_retries + 1):
                 content = client.fetch_snapshot(commit.sha)
                 acquired_at = datetime.now(UTC)
-                artifact = store_raw_artifact(
-                    "cisa_kev", content, acquired_at, ".json", raw_data_dir=settings.raw_data_dir
-                )
+                artifact = raw_store.store("cisa_kev", content, acquired_at, ".json")
                 try:
                     records = parse_catalog(content)
                 except ValueError as exc:

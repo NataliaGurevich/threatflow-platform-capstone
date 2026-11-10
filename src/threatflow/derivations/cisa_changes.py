@@ -16,6 +16,7 @@ from threatflow.config import Settings
 from threatflow.ingestion.cisa_parser import parse_catalog
 from threatflow.models.cisa_change import CisaKevChange
 from threatflow.models.raw_artifact import RawArtifact
+from threatflow.raw_storage import create_raw_artifact_store
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ def resolve_cisa_artifact_path(stored_path: str, raw_root: Path) -> Path:
 
 def rebuild_cisa_changes(settings: Settings | None = None) -> CisaChangesResult:
     settings = settings or Settings()
+    raw_store = create_raw_artifact_store(settings)
     engine = create_engine(settings.database_url)
     counts = {"baseline": 0, "added": 0, "modified": 0, "removed": 0}
     try:
@@ -142,10 +144,7 @@ def rebuild_cisa_changes(settings: Settings | None = None) -> CisaChangesResult:
             session = Session(bind=connection)
             session.execute(delete(CisaKevChange))
             for artifact in artifacts:
-                path = resolve_cisa_artifact_path(
-                    artifact.storage_path, Path(settings.raw_data_dir)
-                )
-                records = parse_catalog(path.read_bytes())
+                records = parse_catalog(raw_store.read(artifact.storage_path))
                 current = {record["cve_id"]: json_safe_record(record) for record in records}
                 is_git_revision = (
                     artifact.request_mode == "git_history" and artifact.source_revision is not None

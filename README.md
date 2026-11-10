@@ -23,6 +23,7 @@ The capstone evidence is organised here:
 - [Failure and recovery demonstration](docs/failure-recovery-demo.md)
 - [5–10 minute presentation script](docs/presentation-script.md)
 - [Implemented and target architecture](docs/data-pipeline-treatflow.md)
+- [S3 Bronze storage decision](docs/adr/0001-s3-bronze-storage.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
 
 Run the fixture-based local verification without external API calls or changes to the
@@ -39,7 +40,11 @@ The source schema has `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`.
 
 ## Raw data storage (Phase 2)
 
-`threatflow.raw_storage.store_raw_artifact` stores original response bytes before parsing or loading. It partitions artifacts by source and acquisition month and names each file with the SHA-256 digest of the exact bytes:
+Ingestion uses the backend-neutral `RawArtifactStore` contract to preserve original response
+bytes before parsing or loading. `LocalRawArtifactStore` is the currently enabled backend; the
+legacy `threatflow.raw_storage.store_raw_artifact` function remains as a compatibility wrapper.
+The local adapter partitions artifacts by source and acquisition month and names each file with
+the SHA-256 digest of the exact bytes:
 
 ```text
 data/raw/
@@ -52,7 +57,12 @@ Artifacts are immutable: a complete temporary file is atomically published, and 
 
 `raw_artifacts` is the searchable manifest for these files. It records source, SHA-256, physical path, size, first acquisition, last observation, observation count, request mode and interval, page offset, record count, and the Airflow run ID when available. Deduplication is global per source and hash, including across acquisition months: an identical response observed later reuses its original file and updates `last_seen_at`/`seen_count`; changed bytes create a new immutable artifact. NVD historical request dates remain queryable in the manifest while the physical path continues to represent the first acquisition month.
 
-Configure the storage root with `THREATFLOW_RAW_DATA_DIR` in `.env`; it defaults to `data/raw`. Copy `.env.example` to `.env` and change the value if you want a different local directory. Run unit tests with `uv run python -m pytest`; storage tests use temporary directories and do not connect to PostgreSQL.
+Set `THREATFLOW_RAW_STORAGE_BACKEND=local` and configure the storage root with
+`THREATFLOW_RAW_DATA_DIR` in `.env`; it defaults to `data/raw`. Copy `.env.example` to `.env`
+and change the value if you want a different local directory. Run unit tests with
+`uv run python -m pytest`; storage tests use temporary directories and do not connect to
+PostgreSQL. S3 is an accepted target design, not an enabled or deployed backend yet; see the
+[S3 Bronze ADR](docs/adr/0001-s3-bronze-storage.md).
 
 ## Phase 1 local setup
 

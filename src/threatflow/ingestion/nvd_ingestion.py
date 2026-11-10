@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from threatflow.config import Settings
 from threatflow.ingestion.nvd_client import NvdClient
 from threatflow.ingestion.nvd_parser import parse_response
-from threatflow.raw_storage import store_raw_artifact
+from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
 from threatflow.repository.nvd_repository import upsert_records
 from threatflow.repository.raw_artifact_repository import record_artifact
 
@@ -55,10 +55,12 @@ def ingest_nvd_cves(
     start: datetime | None = None,
     end: datetime | None = None,
     mode: str = "modified",
+    raw_store: RawArtifactStore | None = None,
 ) -> NvdIngestionResult:
     if mode not in {"modified", "published"}:
         raise ValueError("NVD mode must be modified or published")
     settings = settings or Settings()
+    raw_store = raw_store or create_raw_artifact_store(settings)
     acquired_at = datetime.now(UTC)
     end = end or acquired_at
     start = start or end - timedelta(hours=settings.nvd_modified_lookback_hours)
@@ -95,10 +97,8 @@ def ingest_nvd_cves(
             if mode == "modified"
             else client.fetch_page(start, end, index, mode=mode)
         )
-        artifact = store_raw_artifact(
-            "nvd", content, acquired_at, ".json", raw_data_dir=settings.raw_data_dir
-        )
-        artifacts.append(str(artifact.path))
+        artifact = raw_store.store("nvd", content, acquired_at, ".json")
+        artifacts.append(artifact.uri)
         total_bytes += len(content)
         LOGGER.info(
             "NVD page stored",

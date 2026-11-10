@@ -3,7 +3,13 @@ from hashlib import sha256
 
 import pytest
 
-from threatflow.raw_storage import calculate_sha256, store_raw_artifact
+from threatflow.config import Settings
+from threatflow.raw_storage import (
+    LocalRawArtifactStore,
+    calculate_sha256,
+    create_raw_artifact_store,
+    store_raw_artifact,
+)
 
 ACQUIRED_AT = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
 
@@ -18,6 +24,10 @@ def test_stores_bytes_and_expected_partition(tmp_path) -> None:
     result = store_raw_artifact("cisa_kev", content, ACQUIRED_AT, ".json", raw_data_dir=tmp_path)
 
     assert result.created is True
+    assert result.backend == "local"
+    assert result.uri == str(result.path)
+    assert result.extension == "json"
+    assert result.content_type == "application/json"
     assert result.sha256 == sha256(content).hexdigest()
     assert result.size_bytes == len(content)
     assert result.path == (
@@ -65,6 +75,22 @@ def test_sources_have_separate_paths(tmp_path) -> None:
     assert cisa.sha256 == nvd.sha256
     assert cisa.path != nvd.path
     assert cisa.path.read_bytes() == nvd.path.read_bytes() == content
+
+
+def test_local_store_reads_reference_and_relocated_manifest_path(tmp_path) -> None:
+    store = LocalRawArtifactStore(tmp_path)
+    artifact = store.store("nvd", b"raw", ACQUIRED_AT, "json")
+
+    assert store.read(artifact) == b"raw"
+    relocated = f"/old/machine/data/raw/{artifact.path.relative_to(tmp_path)}"
+    assert store.read(relocated) == b"raw"
+
+
+def test_factory_builds_configured_local_store(tmp_path) -> None:
+    store = create_raw_artifact_store(Settings(raw_data_dir=str(tmp_path)))
+
+    assert isinstance(store, LocalRawArtifactStore)
+    assert store.root == tmp_path
 
 
 def test_atomic_publish_cleans_temporary_file_after_failure(tmp_path, monkeypatch) -> None:

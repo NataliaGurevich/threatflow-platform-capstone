@@ -1,5 +1,7 @@
 """Environment-backed application settings."""
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,6 +14,7 @@ class Settings(BaseSettings):
     postgres_db: str = "threatflow"
     postgres_user: str = "threatflow"
     postgres_password: SecretStr = SecretStr("")
+    raw_storage_backend: Literal["local"] = "local"
     raw_data_dir: str = "data/raw"
     nvd_api_key: SecretStr | None = None
     github_token: SecretStr | None = None

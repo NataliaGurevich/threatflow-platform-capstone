@@ -14,7 +14,7 @@ from threatflow.config import Settings
 from threatflow.ingestion.epss_client import EpssClient
 from threatflow.ingestion.epss_parser import parse_dataset
 from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
-from threatflow.raw_storage import store_raw_artifact
+from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
 from threatflow.repository.epss_repository import prune_history, upsert_records, upsert_summary
 from threatflow.repository.raw_artifact_repository import record_artifact
 
@@ -61,8 +61,10 @@ def ingest_epss(
     score_date: date | None = None,
     client: EpssClient | None = None,
     settings: Settings | None = None,
+    raw_store: RawArtifactStore | None = None,
 ) -> EpssIngestionResult:
     settings = settings or Settings()
+    raw_store = raw_store or create_raw_artifact_store(settings)
     acquired = datetime.now(UTC)
     client = client or EpssClient(
         connect_timeout=settings.http_connect_timeout,
@@ -70,9 +72,7 @@ def ingest_epss(
         retries=settings.http_retries,
     )
     raw = client.fetch(score_date)
-    artifact = store_raw_artifact(
-        "epss", raw, acquired, ".csv.gz", raw_data_dir=settings.raw_data_dir
-    )
+    artifact = raw_store.store("epss", raw, acquired, ".csv.gz")
     if score_date is None:
         try:
             first = gzip.decompress(raw).decode("utf-8-sig").splitlines()[0]
@@ -142,7 +142,7 @@ def ingest_epss(
         "epss",
         resolved,
         acquired,
-        str(artifact.path),
+        artifact.uri,
         artifact.sha256,
         len(raw),
         len(records),

@@ -16,13 +16,16 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
         def fetch(self):
             return content
 
-    def store(source, raw, acquired_at, extension, *, raw_data_dir):
-        observed["bytes"] = raw
-        path = tmp_path / "artifact.json"
-        path.write_bytes(raw)
-        return SimpleNamespace(
-            path=path, sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw)
-        )
+    class RawStore:
+        def store(self, source, raw, acquired_at, extension, *, content_type=None):
+            observed["bytes"] = raw
+            path = tmp_path / "artifact.json"
+            path.write_bytes(raw)
+            return SimpleNamespace(
+                uri=str(path),
+                sha256=hashlib.sha256(raw).hexdigest(),
+                size_bytes=len(raw),
+            )
 
     class Engine:
         def begin(self):
@@ -38,8 +41,6 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
         def dispose(self):
             pass
 
-    monkeypatch.setattr("threatflow.ingestion.cisa_ingestion.store_raw_artifact", store)
-
     def no_database(_):
         raise AssertionError("database must not be opened for invalid catalog")
 
@@ -48,7 +49,11 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
         "threatflow.ingestion.cisa_ingestion.upsert_records", lambda session, records: (0, 0)
     )
     with pytest.raises(ValueError, match="empty"):
-        ingest_cisa_kev(client=Client(), settings=Settings(raw_data_dir=str(tmp_path)))
+        ingest_cisa_kev(
+            client=Client(),
+            settings=Settings(raw_data_dir=str(tmp_path)),
+            raw_store=RawStore(),
+        )
 
     assert observed["bytes"] == content
     assert (tmp_path / "artifact.json").read_bytes() == content

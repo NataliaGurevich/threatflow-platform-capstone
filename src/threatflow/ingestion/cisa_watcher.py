@@ -7,7 +7,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -16,7 +15,11 @@ from threatflow.config import Settings
 from threatflow.ingestion.cisa_client import CisaClient
 from threatflow.ingestion.cisa_ingestion import IngestionResult, ingest_cisa_kev
 from threatflow.models.raw_artifact import RawArtifact
-from threatflow.raw_storage import calculate_sha256, store_raw_artifact
+from threatflow.raw_storage import (
+    RawArtifactStore,
+    calculate_sha256,
+    create_raw_artifact_store,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -80,13 +83,15 @@ def handle_cisa_artifact_observed(
     raw_artifact_created: bool = False,
     snapshot_exists: Callable[[str, Settings], bool] | None = None,
     ingest: Callable[..., IngestionResult] = ingest_cisa_kev,
+    raw_store: RawArtifactStore | None = None,
 ) -> CisaWatchResult:
     """Compare an observed artifact and run normal ingestion only for a new hash."""
     settings = settings or Settings()
+    raw_store = raw_store or create_raw_artifact_store(settings)
     if event.event_version != 1 or event.source != "cisa_kev":
         raise ValueError("unsupported CISA artifact event")
 
-    content = Path(event.artifact_path).read_bytes()
+    content = raw_store.read(event.artifact_path)
     if len(content) != event.size_bytes or calculate_sha256(content) != event.sha256:
         raise ValueError("CISA artifact does not match event metadata")
 
@@ -134,6 +139,7 @@ def watch_cisa_kev(
     settings: Settings | None = None,
     snapshot_exists: Callable[[str, Settings], bool] | None = None,
     ingest: Callable[..., IngestionResult] = ingest_cisa_kev,
+    raw_store: RawArtifactStore | None = None,
 ) -> CisaWatchResult:
     """Fetch and persist once, then deliver a local observation event.
 
@@ -141,6 +147,7 @@ def watch_cisa_kev(
     executions are safe because normal ingestion and repository writes are idempotent.
     """
     settings = settings or Settings()
+    raw_store = raw_store or create_raw_artifact_store(settings)
     client = client or CisaClient(
         connect_timeout=settings.http_connect_timeout,
         read_timeout=settings.http_read_timeout,
@@ -148,17 +155,11 @@ def watch_cisa_kev(
     )
     checked_at = datetime.now(UTC)
     content = client.fetch()
-    artifact = store_raw_artifact(
-        "cisa_kev",
-        content,
-        checked_at,
-        ".json",
-        raw_data_dir=settings.raw_data_dir,
-    )
+    artifact = raw_store.store("cisa_kev", content, checked_at, ".json")
     event = CisaArtifactObserved(
         event_version=1,
         source="cisa_kev",
-        artifact_path=str(artifact.path),
+        artifact_path=artifact.uri,
         sha256=artifact.sha256,
         size_bytes=artifact.size_bytes,
         acquired_at=checked_at,
@@ -169,6 +170,7 @@ def watch_cisa_kev(
         raw_artifact_created=artifact.created,
         snapshot_exists=snapshot_exists,
         ingest=ingest,
+        raw_store=raw_store,
     )
 
 

@@ -7,12 +7,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from threatflow.models.raw_artifact import RawArtifact
-from threatflow.raw_storage import RawArtifactResult
+from threatflow.raw_storage import RawArtifactRef
 
 
 def record_artifact(
     session: Session,
-    artifact: RawArtifactResult,
+    artifact: RawArtifactRef,
     acquired_at: datetime,
     *,
     request_mode: str | None = None,
@@ -23,12 +23,11 @@ def record_artifact(
     ingestion_run_id: str | None = None,
     source_revision: str | None = None,
 ) -> None:
-    extension = "".join(artifact.path.suffixes).removeprefix(".")
     statement = insert(RawArtifact).values(
         source=artifact.source,
         sha256=artifact.sha256,
-        storage_path=str(artifact.path),
-        extension=extension,
+        storage_path=artifact.uri,
+        extension=artifact.extension,
         size_bytes=artifact.size_bytes,
         first_acquired_at=acquired_at,
         last_seen_at=acquired_at,
