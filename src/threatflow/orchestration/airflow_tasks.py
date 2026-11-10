@@ -40,6 +40,31 @@ def daily(source, interval_start, interval_end):
     return asdict(result)
 
 
+def watch_cisa():
+    """Run the optional CISA change detector without replacing cisa_daily."""
+    import logging
+    from dataclasses import asdict
+
+    from threatflow.ingestion.cisa_watcher import watch_cisa_kev
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    log = logging.getLogger("threatflow.airflow.cisa_watcher")
+    log.info("stage=cisa_watch_start")
+    result = watch_cisa_kev()
+    log.info(
+        "stage=cisa_watch_complete changed=%s sha256=%s downloaded_bytes=%d "
+        "raw_artifact_created=%s",
+        result.changed,
+        result.sha256,
+        result.downloaded_bytes,
+        result.raw_artifact_created,
+    )
+    return asdict(result)
+
+
 def validate(**context):
     from airflow.exceptions import AirflowFailException
 

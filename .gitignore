@@ -41,6 +41,12 @@ build/
 *.md
 !docs/cli-commands.md
 !docs/cli-commands.en.md
+!docs/data-pipeline-architecture.md
+!docs/data-pipeline-architecture.en.md
+!docs/aws-pipeline-implementation-plan.md
+!docs/aws-pipeline-implementation-plan.en.md
+!docs/current-system-baseline-and-backlog.md
+!docs/current-system-baseline-and-backlog.en.md
 !docs/vulnerability-prioritization.en.md
 *.tmp
 *.swp

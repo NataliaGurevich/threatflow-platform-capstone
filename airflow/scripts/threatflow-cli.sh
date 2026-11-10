@@ -16,6 +16,9 @@ case "${command_name}" in
   rebuild-cisa-changes)
     exec /opt/threatflow-venv/bin/threatflow-build-cisa-changes "$@"
     ;;
+  watch-cisa)
+    exec /opt/threatflow-venv/bin/threatflow-watch-cisa "$@"
+    ;;
   backup-databases)
     exec /opt/threatflow-venv/bin/threatflow-backup-databases "$@"
     ;;
@@ -27,12 +30,14 @@ Usage:
   docker compose run --rm threatflow-cli backfill [options]
   docker compose run --rm --no-deps threatflow-cli backfill-status [options]
   docker compose run --rm threatflow-cli rebuild-cisa-changes
+  docker compose run --rm threatflow-cli watch-cisa
   docker compose run --rm --no-deps threatflow-cli backup-databases
 
 Examples:
   docker compose run --rm threatflow-cli backfill --sources cisa --start 2025-01-01 --end 2025-01-31 --dry-run
   docker compose run --rm --no-deps threatflow-cli backfill-status --checkpoint /opt/threatflow/data/backfill-checkpoint.json
   docker compose run --rm threatflow-cli rebuild-cisa-changes
+  docker compose run --rm threatflow-cli watch-cisa
   docker compose run --rm --no-deps threatflow-cli backup-databases
 EOF
     ;;

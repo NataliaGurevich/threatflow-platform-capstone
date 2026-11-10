@@ -54,11 +54,38 @@ def test_cisa_daily_accepts_cron_trigger_point_interval(monkeypatch):
     trigger_time = datetime(2026, 11, 4, 4, tzinfo=UTC)
     assert run_daily("cisa", trigger_time, trigger_time).source == "cisa"
     assert calls == ["cisa"]
-
     with pytest.raises(ValueError, match="invalid daily source or interval"):
         run_daily("cisa", trigger_time, trigger_time.replace(hour=3))
     assert calls == ["cisa"]
 
+
+def test_cisa_watcher_adapter_returns_small_result(monkeypatch):
+    from datetime import UTC, datetime
+
+    from threatflow.ingestion import cisa_watcher
+    from threatflow.ingestion.cisa_watcher import CisaWatchResult
+    from threatflow.orchestration.airflow_tasks import watch_cisa
+
+    monkeypatch.setattr(
+        cisa_watcher,
+        "watch_cisa_kev",
+        lambda: CisaWatchResult(
+            source="cisa_kev",
+            checked_at=datetime(2026, 11, 10, tzinfo=UTC),
+            sha256="a" * 64,
+            downloaded_bytes=123,
+            raw_artifact_path="data/raw/cisa.json",
+            raw_artifact_created=False,
+            changed=False,
+            ingestion=None,
+        ),
+    )
+
+    result = watch_cisa()
+
+    assert result["changed"] is False
+    assert result["sha256"] == "a" * 64
+    assert result["ingestion"] is None
 
 def test_airflow_daily_normalizes_source_and_logs_stages(monkeypatch, caplog):
     from threatflow.orchestration import airflow_tasks

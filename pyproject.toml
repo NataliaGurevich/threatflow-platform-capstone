@@ -15,6 +15,7 @@ dependencies = [
 threatflow-backfill-range = "threatflow.orchestration.backfill_controller:main"
 threatflow-backfill-status = "threatflow.orchestration.backfill_status:main"
 threatflow-build-cisa-changes = "threatflow.derivations.cisa_changes:main"
+threatflow-watch-cisa = "threatflow.ingestion.cisa_watcher:main"
 threatflow-backup-databases = "threatflow.database_backup:main"
 
 [dependency-groups]
