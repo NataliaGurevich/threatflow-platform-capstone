@@ -1,5 +1,6 @@
 """Persistence for the raw artifact manifest."""
 
+from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import func
@@ -22,6 +23,7 @@ def record_artifact(
     record_count: int | None = None,
     ingestion_run_id: str | None = None,
     source_revision: str | None = None,
+    additional_locations: Iterable[RawArtifactRef] = (),
 ) -> None:
     statement = insert(RawArtifact).values(
         source=artifact.source,
@@ -57,15 +59,53 @@ def record_artifact(
     ).returning(RawArtifact.id)
     artifact_id = session.execute(statement).scalar_one()
 
+    _upsert_artifact_location(session, artifact_id, artifact, acquired_at)
+    for location in additional_locations:
+        _validate_location_identity(artifact, location)
+        _upsert_artifact_location(session, artifact_id, location, acquired_at)
+
+
+def record_artifact_location(
+    session: Session,
+    artifact_id: int,
+    location: RawArtifactRef,
+    verified_at: datetime,
+) -> None:
+    """Attach or refresh a verified physical copy without recording a source observation."""
+    manifest = session.get(RawArtifact, artifact_id)
+    if manifest is None:
+        raise ValueError(f"raw artifact does not exist: {artifact_id}")
+    _validate_location_identity(manifest, location)
+    _upsert_artifact_location(session, artifact_id, location, verified_at)
+
+
+def _validate_location_identity(
+    manifest: RawArtifact | RawArtifactRef,
+    location: RawArtifactRef,
+) -> None:
+    expected = (manifest.source, manifest.sha256, manifest.extension, manifest.size_bytes)
+    actual = (location.source, location.sha256, location.extension, location.size_bytes)
+    if actual != expected:
+        raise ValueError("physical location identity does not match the raw artifact manifest")
+
+
+def _upsert_artifact_location(
+    session: Session,
+    artifact_id: int,
+    location: RawArtifactRef,
+    verified_at: datetime,
+) -> None:
+    """Upsert one backend locator after its bytes and metadata have been verified."""
+
     location_statement = insert(RawArtifactLocation).values(
         artifact_id=artifact_id,
-        backend=artifact.backend,
-        uri=artifact.uri,
-        storage_bucket=artifact.bucket,
-        storage_key=artifact.object_key,
-        storage_version_id=artifact.version_id,
-        first_recorded_at=acquired_at,
-        last_verified_at=acquired_at,
+        backend=location.backend,
+        uri=location.uri,
+        storage_bucket=location.bucket,
+        storage_key=location.object_key,
+        storage_version_id=location.version_id,
+        first_recorded_at=verified_at,
+        last_verified_at=verified_at,
     )
     location_excluded = location_statement.excluded
     location_statement = location_statement.on_conflict_do_update(
@@ -75,8 +115,8 @@ def record_artifact(
             "storage_bucket": location_excluded.storage_bucket,
             "storage_key": location_excluded.storage_key,
             "storage_version_id": location_excluded.storage_version_id,
-            "last_verified_at": acquired_at,
-            "updated_at": acquired_at,
+            "last_verified_at": verified_at,
+            "updated_at": verified_at,
         },
     )
     session.execute(location_statement)

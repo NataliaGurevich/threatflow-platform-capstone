@@ -79,6 +79,14 @@ Before production deployment, owners must approve Raw retention, backup retentio
 objectives and any legal hold requirements. The target S3 design adds versioning and explicit
 lifecycle rules rather than silently inheriting the local indefinite policy.
 
+Validated S3 Bronze objects are recovery and audit copies. An upload must be checksum-verified
+and represented in `raw_artifact_locations`; object presence alone is not acceptance evidence.
+S3 must not trigger a parallel normalization path while Airflow owns orchestration. Before any
+local cleanup is enabled, complete a restore/replay drill from S3 and document the minimum local
+retention window. Production rollout should add least-privilege access, upload/verification
+failure alerts, and appropriate CloudTrail data-event or S3 access telemetry after reviewing its
+cost and retention implications.
+
 ## Responsible interpretation
 
 - CVSS is technical severity, not probability or organisational risk.

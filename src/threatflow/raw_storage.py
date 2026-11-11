@@ -128,6 +128,53 @@ def create_raw_artifact_store(settings: Settings | None = None) -> RawArtifactSt
     raise ValueError(f"unsupported raw storage backend: {settings.raw_storage_backend}")
 
 
+def create_validated_replica_store(settings: Settings | None = None) -> RawArtifactStore | None:
+    """Build the optional S3 target used only after source validation succeeds."""
+    settings = settings or Settings()
+    if not settings.s3_replication_enabled:
+        return None
+    from threatflow.s3_raw_storage import S3RawArtifactStore
+
+    return S3RawArtifactStore(
+        bucket=settings.s3_bronze_bucket or "",
+        prefix=settings.s3_bronze_prefix,
+        region_name=settings.aws_region,
+        connect_timeout=settings.http_connect_timeout,
+        read_timeout=settings.http_read_timeout,
+        max_attempts=settings.http_retries + 1,
+    )
+
+
+def replicate_validated_artifact(
+    replica_store: RawArtifactStore | None,
+    local_artifact: RawArtifactRef,
+    content: bytes,
+    acquired_at: datetime,
+) -> RawArtifactRef | None:
+    """Copy exact validated bytes to S3 and verify that logical identity is unchanged."""
+    if replica_store is None:
+        return None
+    if local_artifact.backend != "local":
+        raise ValueError("validated S3 replication requires a local source artifact")
+    replica = replica_store.store(
+        local_artifact.source,
+        content,
+        acquired_at,
+        local_artifact.extension,
+        content_type=local_artifact.content_type,
+    )
+    expected = (
+        local_artifact.source,
+        local_artifact.sha256,
+        local_artifact.extension,
+        local_artifact.size_bytes,
+    )
+    actual = (replica.source, replica.sha256, replica.extension, replica.size_bytes)
+    if replica.backend != "s3" or actual != expected:
+        raise ValueError("S3 replica identity does not match the validated local artifact")
+    return replica
+
+
 def store_raw_artifact(
     source: str,
     content: bytes,

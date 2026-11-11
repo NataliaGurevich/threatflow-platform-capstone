@@ -11,7 +11,11 @@ from botocore.stub import Stubber
 from pydantic import ValidationError
 
 from threatflow.config import Settings
-from threatflow.raw_storage import RawArtifactRef, create_raw_artifact_store
+from threatflow.raw_storage import (
+    RawArtifactRef,
+    create_raw_artifact_store,
+    create_validated_replica_store,
+)
 from threatflow.s3_raw_storage import RawArtifactIntegrityError, S3RawArtifactStore
 
 BUCKET = "threatflow-dev-bronze-test"
@@ -234,3 +238,26 @@ def test_s3_settings_require_bucket_and_factory_builds_s3_store(monkeypatch) -> 
     assert store.bucket == BUCKET
     assert store.prefix == "bronze"
     assert store.client is fake_client
+
+
+def test_replication_settings_require_local_primary_and_build_s3_target(monkeypatch) -> None:
+    with pytest.raises(ValidationError, match="s3_bronze_bucket"):
+        Settings(s3_replication_enabled=True)
+    with pytest.raises(ValidationError, match="raw_storage_backend='local'"):
+        Settings(
+            raw_storage_backend="s3",
+            s3_replication_enabled=True,
+            s3_bronze_bucket=BUCKET,
+        )
+
+    fake_client = object()
+    monkeypatch.setattr(
+        "threatflow.s3_raw_storage.boto3.client", lambda *args, **kwargs: fake_client
+    )
+    store = create_validated_replica_store(
+        Settings(s3_replication_enabled=True, s3_bronze_bucket=BUCKET)
+    )
+
+    assert isinstance(store, S3RawArtifactStore)
+    assert store.client is fake_client
+    assert create_validated_replica_store(Settings()) is None

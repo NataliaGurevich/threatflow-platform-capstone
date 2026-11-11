@@ -65,7 +65,16 @@ Deduplication is global per source and hash: identical bytes reuse the artifact 
 corresponding backend location; changed bytes create a new immutable artifact.
 
 Set `THREATFLOW_RAW_STORAGE_BACKEND=local` and configure `THREATFLOW_RAW_DATA_DIR`; this remains
-the credential-free default. The implemented S3 adapter can instead use
+the credential-free default. To keep every accepted artifact both locally and in S3, also set
+`THREATFLOW_S3_REPLICATION_ENABLED=true`, `THREATFLOW_S3_BRONZE_BUCKET`,
+`THREATFLOW_S3_BRONZE_PREFIX`, and `THREATFLOW_AWS_REGION`. In this mode ingestion first stores
+the exact response locally, completes source-specific parsing and completeness checks, then
+uploads and verifies the same bytes in S3. Invalid or implausibly incomplete responses remain
+available locally for diagnosis but are not promoted to S3 Bronze. An S3 or manifest failure
+fails the ingestion before normalized database writes; a retry safely reuses content-addressed
+local/S3 objects.
+
+The implemented S3 adapter can alternatively be selected as a single direct backend with
 `THREATFLOW_RAW_STORAGE_BACKEND=s3`, `THREATFLOW_S3_BRONZE_BUCKET`,
 `THREATFLOW_S3_BRONZE_PREFIX`, and `THREATFLOW_AWS_REGION`. It writes deterministic keys such as
 `bronze/source=epss/sha256=<sha256>.csv.gz`, requires timezone-aware acquisition timestamps,
@@ -75,6 +84,27 @@ selected by this code change. Migration `0008` backfills every existing `storage
 local location. Do not switch a source until the migration is applied and the required S3
 locations have been reconciled; see the
 [S3 Bronze ADR](docs/adr/0001-s3-bronze-storage.md).
+
+Plan reconciliation without creating an AWS client or changing the manifest:
+
+```bash
+THREATFLOW_S3_BRONZE_BUCKET=<bucket> \
+  uv run threatflow-reconcile-raw-storage --source epss --dry-run --limit 10
+```
+
+The command verifies every selected local file against manifest size and SHA-256, reports its
+deterministic target URI, and returns a non-zero status when any local copy is missing or
+corrupt. After the bucket exists and the plan is reviewed, replace `--dry-run` with `--apply`.
+Apply mode verifies each S3 object through the adapter and commits its location independently;
+therefore a retry skips locations already completed and does not increment `seen_count`.
+
+S3 Bronze is the immutable replay/audit layer, not a second normalization pipeline. A successful
+upload records its checksum, URI, version, and verification time in PostgreSQL; the existing
+ingestion run remains responsible for PostgreSQL UPSERTs. S3 event-driven processing is deferred
+to avoid duplicate orchestration alongside Airflow. Before deleting local copies, define a
+retention policy and demonstrate restore from S3. Cloud deployments should monitor failed
+uploads and object verification, enable appropriate audit/access telemetry, and review the
+storage, request, and telemetry costs.
 
 ## Phase 1 local setup
 

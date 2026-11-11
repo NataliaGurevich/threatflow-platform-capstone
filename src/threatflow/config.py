@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("")
     raw_storage_backend: Literal["local", "s3"] = "local"
     raw_data_dir: str = "data/raw"
+    s3_replication_enabled: bool = False
     s3_bronze_bucket: str | None = None
     s3_bronze_prefix: str = "bronze"
     aws_region: str | None = None
@@ -33,8 +34,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_raw_storage_settings(self) -> "Settings":
-        if self.raw_storage_backend == "s3" and not self.s3_bronze_bucket:
-            raise ValueError("s3_bronze_bucket is required when raw_storage_backend is 's3'")
+        if (self.raw_storage_backend == "s3" or self.s3_replication_enabled) and not (
+            self.s3_bronze_bucket
+        ):
+            raise ValueError(
+                "s3_bronze_bucket is required for the S3 backend or S3 replication"
+            )
+        if self.s3_replication_enabled and self.raw_storage_backend != "local":
+            raise ValueError("S3 replication requires raw_storage_backend='local'")
         if not self.s3_bronze_prefix.strip("/"):
             raise ValueError("s3_bronze_prefix must contain at least one non-slash character")
         return self

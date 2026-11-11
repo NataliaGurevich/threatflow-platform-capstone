@@ -17,8 +17,13 @@ from threatflow.models.cisa import CisaKevVulnerability
 from threatflow.models.cisa_change import CisaKevChange
 from threatflow.models.raw_artifact import RawArtifact, RawArtifactLocation
 from threatflow.raw_storage import RawArtifactRef
+from threatflow.raw_storage_reconciliation import list_reconciliation_candidates
 from threatflow.repository.cisa_repository import upsert_records
-from threatflow.repository.raw_artifact_repository import artifact_location_uri, record_artifact
+from threatflow.repository.raw_artifact_repository import (
+    artifact_location_uri,
+    record_artifact,
+    record_artifact_location,
+)
 
 
 def record(number: int, **changes):
@@ -110,8 +115,13 @@ def test_raw_artifact_can_have_local_and_s3_locations(session):
     )
 
     record_artifact(session, local, acquired_at, request_mode="snapshot")
-    record_artifact(session, s3, acquired_at, request_mode="snapshot")
     session.flush()
+    artifact = session.scalar(select(RawArtifact).where(RawArtifact.sha256 == digest))
+    candidates = list_reconciliation_candidates(session, "cisa_kev")
+    assert [candidate.artifact_id for candidate in candidates] == [artifact.id]
+    record_artifact_location(session, artifact.id, s3, acquired_at)
+    session.flush()
+    assert list_reconciliation_candidates(session, "cisa_kev") == []
     session.expire_all()
 
     artifact = session.scalar(select(RawArtifact).where(RawArtifact.sha256 == digest))
@@ -122,7 +132,7 @@ def test_raw_artifact_can_have_local_and_s3_locations(session):
     ).all()
 
     assert artifact.storage_path == local.uri
-    assert artifact.seen_count == 2
+    assert artifact.seen_count == 1
     assert [(location.backend, location.uri) for location in locations] == [
         ("local", local.uri),
         ("s3", s3.uri),
@@ -130,6 +140,49 @@ def test_raw_artifact_can_have_local_and_s3_locations(session):
     assert artifact_location_uri(artifact, "local") == local.uri
     assert artifact_location_uri(artifact, "s3") == s3.uri
     assert locations[1].storage_version_id == "version-1"
+
+
+def test_one_observation_records_local_and_s3_locations_without_double_counting(session):
+    acquired_at = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    digest = "c" * 64
+    local = RawArtifactRef(
+        source="nvd",
+        sha256=digest,
+        uri="data/raw/nvd/artifact.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="local",
+    )
+    s3 = RawArtifactRef(
+        source="nvd",
+        sha256=digest,
+        uri=f"s3://threatflow-bronze/bronze/source=nvd/sha256={digest}.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="s3",
+        bucket="threatflow-bronze",
+        object_key=f"bronze/source=nvd/sha256={digest}.json",
+        version_id="version-2",
+    )
+
+    record_artifact(session, local, acquired_at, additional_locations=(s3,))
+    session.flush()
+    artifact = session.scalar(select(RawArtifact).where(RawArtifact.sha256 == digest))
+    locations = session.scalars(
+        select(RawArtifactLocation)
+        .where(RawArtifactLocation.artifact_id == artifact.id)
+        .order_by(RawArtifactLocation.backend)
+    ).all()
+
+    assert artifact.seen_count == 1
+    assert [(location.backend, location.uri) for location in locations] == [
+        ("local", local.uri),
+        ("s3", s3.uri),
+    ]
 
 
 def test_s3_location_requires_structured_bucket_and_key(session):
@@ -160,6 +213,39 @@ def test_s3_location_requires_structured_bucket_and_key(session):
     with pytest.raises(IntegrityError):
         session.flush()
     session.rollback()
+
+
+def test_reconciliation_dry_run_uses_manifest_and_local_bytes_without_aws(
+    session, tmp_path, monkeypatch
+):
+    from threatflow import raw_storage_reconciliation
+    from threatflow.config import Settings
+    from threatflow.local_raw_storage import LocalRawArtifactStore
+
+    acquired_at = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    local_store = LocalRawArtifactStore(tmp_path)
+    local = local_store.store("epss", b"compressed-csv", acquired_at, "csv.gz")
+    record_artifact(session, local, acquired_at, request_mode="historical")
+    session.commit()
+
+    engine = session.get_bind()
+    monkeypatch.setattr(raw_storage_reconciliation, "create_engine", lambda _: engine)
+
+    def reject_aws_client(*args, **kwargs):
+        raise AssertionError("dry-run must not create an AWS client")
+
+    monkeypatch.setattr("threatflow.s3_raw_storage.boto3.client", reject_aws_client)
+    result = raw_storage_reconciliation.reconcile_raw_storage(
+        Settings(raw_data_dir=str(tmp_path), s3_bronze_bucket="threatflow-bronze"),
+        source="epss",
+        dry_run=True,
+    )
+
+    assert result.scanned == result.verified == result.planned == 1
+    assert result.uploaded == result.reused == 0
+    assert result.target_uris == (
+        f"s3://threatflow-bronze/bronze/source=epss/sha256={local.sha256}.csv.gz",
+    )
 
 
 def test_daily_ingestion_writes_incremental_changes_atomically(session, tmp_path, monkeypatch):

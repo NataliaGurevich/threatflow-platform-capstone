@@ -18,6 +18,7 @@ threatflow-backfill-status = "threatflow.orchestration.backfill_status:main"
 threatflow-build-cisa-changes = "threatflow.derivations.cisa_changes:main"
 threatflow-watch-cisa = "threatflow.ingestion.cisa_watcher:main"
 threatflow-backup-databases = "threatflow.database_backup:main"
+threatflow-reconcile-raw-storage = "threatflow.raw_storage_reconciliation:main"
 
 [dependency-groups]
 dev = [

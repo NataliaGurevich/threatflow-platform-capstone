@@ -176,10 +176,17 @@ def test_incomplete_historical_archive_never_opens_database(tmp_path, monkeypatc
     def no_database(_):
         raise AssertionError("incomplete archive must not reach database")
 
+    class NoReplica:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            raise AssertionError("incomplete archive must not reach S3")
+
     monkeypatch.setattr("threatflow.ingestion.epss_ingestion.create_engine", no_database)
     with pytest.raises(ValueError, match="incomplete"):
         ingest_epss(
             score_date=date(2021, 5, 1),
             client=Client(),
             settings=Settings(raw_data_dir=str(tmp_path)),
+            replica_store=NoReplica(),
         )

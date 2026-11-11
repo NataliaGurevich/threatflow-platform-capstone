@@ -44,6 +44,12 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
     def no_database(_):
         raise AssertionError("database must not be opened for invalid catalog")
 
+    class NoReplica:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            raise AssertionError("invalid catalog must not reach S3")
+
     monkeypatch.setattr("threatflow.ingestion.cisa_ingestion.create_engine", no_database)
     monkeypatch.setattr(
         "threatflow.ingestion.cisa_ingestion.upsert_records", lambda session, records: (0, 0)
@@ -53,6 +59,7 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
             client=Client(),
             settings=Settings(raw_data_dir=str(tmp_path)),
             raw_store=RawStore(),
+            replica_store=NoReplica(),
         )
 
     assert observed["bytes"] == content

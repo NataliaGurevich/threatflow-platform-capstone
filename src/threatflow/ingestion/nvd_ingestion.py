@@ -12,7 +12,12 @@ from sqlalchemy import create_engine
 from threatflow.config import Settings
 from threatflow.ingestion.nvd_client import NvdClient
 from threatflow.ingestion.nvd_parser import parse_response
-from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
+from threatflow.raw_storage import (
+    RawArtifactStore,
+    create_raw_artifact_store,
+    create_validated_replica_store,
+    replicate_validated_artifact,
+)
 from threatflow.repository.nvd_repository import upsert_records
 from threatflow.repository.raw_artifact_repository import record_artifact
 
@@ -56,6 +61,7 @@ def ingest_nvd_cves(
     end: datetime | None = None,
     mode: str = "modified",
     raw_store: RawArtifactStore | None = None,
+    replica_store: RawArtifactStore | None = None,
 ) -> NvdIngestionResult:
     if mode not in {"modified", "published"}:
         raise ValueError("NVD mode must be modified or published")
@@ -132,13 +138,30 @@ def ingest_nvd_cves(
         if page_number > expected_total + 1:
             raise ValueError("NVD pagination safety limit exceeded")
     unique = _deduplicate(records)
+    if replica_store is None:
+        replica_store = create_validated_replica_store(settings)
+    replicas = (
+        [
+            replicate_validated_artifact(
+                replica_store,
+                artifact,
+                raw_store.read(artifact),
+                acquired_at,
+            )
+            for artifact, _, _ in artifact_pages
+        ]
+        if replica_store is not None
+        else [None] * len(artifact_pages)
+    )
     engine = create_engine(settings.database_url)
     try:
         with engine.begin() as connection:
             from sqlalchemy.orm import Session
 
             with Session(bind=connection) as session:
-                for artifact, page_start_index, record_count in artifact_pages:
+                for (artifact, page_start_index, record_count), replica in zip(
+                    artifact_pages, replicas, strict=True
+                ):
                     record_artifact(
                         session,
                         artifact,
@@ -149,6 +172,7 @@ def ingest_nvd_cves(
                         page_start_index=page_start_index,
                         record_count=record_count,
                         ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                        additional_locations=(replica,) if replica is not None else (),
                     )
                 inserted, updated = upsert_records(session, unique)
                 session.flush()

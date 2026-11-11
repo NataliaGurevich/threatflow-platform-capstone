@@ -1,11 +1,13 @@
 import json
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 
 import pytest
 
 from threatflow.config import Settings
 from threatflow.ingestion import nvd_client, nvd_ingestion
 from threatflow.ingestion.nvd_parser import parse_response
+from threatflow.raw_storage import RawArtifactRef
 
 
 def payload(start=0, total=1, records=None):
@@ -119,17 +121,43 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
 
     monkeypatch.setattr(nvd_ingestion, "create_engine", lambda _: Engine())
     monkeypatch.setattr(nvd_ingestion, "upsert_records", lambda session, rows: (1, 0))
-    monkeypatch.setattr(nvd_ingestion, "record_artifact", lambda *args, **kwargs: None)
+    recorded_locations = []
+
+    def record(*args, **kwargs):
+        recorded_locations.extend(kwargs["additional_locations"])
+
+    class ReplicaStore:
+        backend = "s3"
+
+        def store(self, source, content, acquired_at, extension, *, content_type=None):
+            digest = sha256(content).hexdigest()
+            return RawArtifactRef(
+                source=source,
+                sha256=digest,
+                uri=f"s3://bronze/bronze/source={source}/sha256={digest}.{extension}",
+                extension=extension,
+                content_type=content_type,
+                size_bytes=len(content),
+                created=True,
+                backend="s3",
+                bucket="bronze",
+                object_key=f"bronze/source={source}/sha256={digest}.{extension}",
+            )
+
+    monkeypatch.setattr(nvd_ingestion, "record_artifact", record)
     settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1)
     result = nvd_ingestion.ingest_nvd_cves(
         client=Client(),
         settings=settings,
         start=datetime(2024, 1, 1, tzinfo=UTC),
         end=datetime(2024, 1, 5, tzinfo=UTC),
+        replica_store=ReplicaStore(),
     )
     assert result.pages_retrieved == 2 and result.total_records_received == 2
     assert result.unique_records_processed == 1
     assert result.rejected_count == 0
+    assert len(recorded_locations) == 2
+    assert all(location.backend == "s3" for location in recorded_locations)
 
 
 def test_total_change_fails_after_raw_storage(monkeypatch, tmp_path):
@@ -138,10 +166,18 @@ def test_total_change_fails_after_raw_storage(monkeypatch, tmp_path):
             return payload(index, 2 if index == 0 else 3, [cve(id=f"CVE-2024-{index + 1:04d}")])
 
     settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1)
+
+    class NoReplica:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            raise AssertionError("invalid pagination must not reach S3")
+
     with pytest.raises(ValueError, match="totalResults changed"):
         nvd_ingestion.ingest_nvd_cves(
             client=Client(),
             settings=settings,
             start=datetime(2024, 1, 1, tzinfo=UTC),
             end=datetime(2024, 1, 5, tzinfo=UTC),
+            replica_store=NoReplica(),
         )

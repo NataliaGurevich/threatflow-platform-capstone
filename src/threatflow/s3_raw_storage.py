@@ -22,6 +22,14 @@ class RawArtifactIntegrityError(OSError):
     """Raised when stored S3 metadata or downloaded bytes do not match the artifact identity."""
 
 
+def build_s3_object_key(prefix: str, source: str, digest: str, extension: str) -> str:
+    """Return the deterministic Bronze key without creating an AWS client."""
+    normalized_prefix = prefix.strip("/")
+    if not normalized_prefix:
+        raise ValueError("prefix must contain at least one non-slash character")
+    return f"{normalized_prefix}/source={source}/sha256={digest}.{extension}"
+
+
 class S3RawArtifactStore:
     """Store exact raw bytes as immutable, content-addressed S3 objects."""
 
@@ -166,7 +174,7 @@ class S3RawArtifactStore:
         return content
 
     def _object_key(self, source: str, digest: str, extension: str) -> str:
-        return f"{self.prefix}/source={source}/sha256={digest}.{extension}"
+        return build_s3_object_key(self.prefix, source, digest, extension)
 
     def _parse_uri(self, locator: str) -> tuple[str, str]:
         parsed = urlsplit(locator)

@@ -14,7 +14,12 @@ from threatflow.config import Settings
 from threatflow.ingestion.epss_client import EpssClient
 from threatflow.ingestion.epss_parser import parse_dataset
 from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
-from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
+from threatflow.raw_storage import (
+    RawArtifactStore,
+    create_raw_artifact_store,
+    create_validated_replica_store,
+    replicate_validated_artifact,
+)
 from threatflow.repository.epss_repository import prune_history, upsert_records, upsert_summary
 from threatflow.repository.raw_artifact_repository import record_artifact
 
@@ -62,6 +67,7 @@ def ingest_epss(
     client: EpssClient | None = None,
     settings: Settings | None = None,
     raw_store: RawArtifactStore | None = None,
+    replica_store: RawArtifactStore | None = None,
 ) -> EpssIngestionResult:
     settings = settings or Settings()
     raw_store = raw_store or create_raw_artifact_store(settings)
@@ -92,9 +98,22 @@ def ingest_epss(
     validate_completeness(len(records), resolved)
     engine = create_engine(settings.database_url)
     try:
-        with engine.begin() as connection:
-            from sqlalchemy.orm import Session
+        from sqlalchemy.orm import Session
 
+        with Session(engine) as session:
+            adjacent = session.scalar(
+                select(EpssDailySummary.record_count).where(
+                    EpssDailySummary.score_date == resolved - timedelta(days=1)
+                )
+            )
+        validate_completeness(len(records), resolved, adjacent)
+        if replica_store is None:
+            replica_store = create_validated_replica_store(settings)
+        replica = replicate_validated_artifact(
+            replica_store, artifact, raw, acquired
+        )
+
+        with engine.begin() as connection:
             with Session(bind=connection) as session:
                 score_start = datetime.combine(resolved, datetime.min.time(), UTC)
                 record_artifact(
@@ -106,13 +125,8 @@ def ingest_epss(
                     requested_end=score_start + timedelta(days=1),
                     record_count=len(records),
                     ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                    additional_locations=(replica,) if replica is not None else (),
                 )
-                adjacent = session.scalar(
-                    select(EpssDailySummary.record_count).where(
-                        EpssDailySummary.score_date == resolved - timedelta(days=1)
-                    )
-                )
-                validate_completeness(len(records), resolved, adjacent)
                 latest_date = session.scalar(select(func.max(EpssCurrentScore.score_date)))
                 cutoff = (latest_date or resolved) - timedelta(
                     days=settings.epss_history_retention_days - 1

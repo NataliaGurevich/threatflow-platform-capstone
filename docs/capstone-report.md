@@ -138,8 +138,9 @@ use disposable containers; read-only analytical mode uses the already-running lo
 ## Limitations and future improvements
 
 - Add asset inventory and product matching before making organisation-specific claims.
-- Deploy and reconcile the implemented S3 `RawArtifactStore` against local Raw locations only
-  after reviewing the Terraform plan and verifying object counts, sizes, and checksums.
+- Deploy validated local-to-S3 Bronze replication only after reviewing the Terraform plan, then
+  run the dry-run-first reconciliation command and record object counts, sizes, and checksums.
+  The code path is tested with stubbed AWS calls but real AWS upload/replay remains to be verified.
 - Move large historical analytical storage to Parquet/Iceberg only after the local capstone
   is fully demonstrated and cost/volume measurements justify it.
 - Add CI execution of lint/unit tests and an environment with Docker for integration and

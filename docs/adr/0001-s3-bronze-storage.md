@@ -19,6 +19,12 @@ Ingestion depends on the `RawArtifactStore` protocol. `LocalRawArtifactStore` re
 default. `S3RawArtifactStore` implements the accepted bucket contract behind the same protocol;
 selecting it requires explicit settings and does not deploy infrastructure.
 
+Normal dual-storage ingestion is a two-phase promotion. Exact response bytes are written to the
+local store first. Only after source-specific parsing, structural validation, pagination checks,
+and completeness/anomaly checks succeed are the same bytes written and verified in S3. The
+manifest transaction then records the local and S3 locations as one source observation. Invalid
+payloads remain local evidence and are never promoted to the accepted S3 Bronze layer.
+
 The S3 object key will be deterministic and content-addressed:
 
 ```text
@@ -50,14 +56,22 @@ The rollout sequence is:
 1. Introduce the storage protocol and preserve local behavior.
 2. Add and statically validate the Terraform module without applying it.
 3. Add the S3 adapter and unit tests with stubbed AWS calls. **Complete.**
-4. Review `terraform plan`, then explicitly approve creation of development resources.
-5. Reconcile hashes and sizes for EPSS before rolling out CISA and NVD.
+4. Add a dry-run-first, idempotent local-to-S3 reconciliation command. **Complete.**
+5. Add validated local-to-S3 replication to normal ingestion. **Complete in code; AWS runtime
+   not yet verified.**
+6. Review `terraform plan`, then explicitly approve creation of development resources.
+7. Reconcile hashes and sizes for EPSS before rolling out CISA and NVD.
 
 ## Consequences
 
 - Local development and the capstone demo continue without AWS access.
 - Source ingestion does not import boto3 or Terraform-specific code.
 - Storage failures continue to fail ingestion before normalized database writes.
+- Direct ingestion replication is enabled explicitly with
+  `THREATFLOW_S3_REPLICATION_ENABLED=true` while the primary backend remains `local`.
+- NVD pages are promoted only after the complete pagination traversal is consistent; CISA only
+  after catalog and shrinkage checks; EPSS only after structural, era-floor, and adjacent-day
+  completeness checks. Exhausted invalid CISA Git snapshots remain local only.
 - CISA replay reads through the storage contract instead of directly opening a local path.
 - Migration `0008_raw_artifact_locations` keeps the legacy `storage_path` column for
   compatibility, creates the one-to-many locations table, and backfills existing paths as
@@ -65,8 +79,13 @@ The rollout sequence is:
 - Existing local manifest rows are not uploaded or rewritten automatically. Reconciliation is
   required before switching an ingestion source; backend-specific reads fail clearly if the
   requested location has not been verified.
+- Reconciliation verifies local bytes before upload and commits each verified S3 location in a
+  separate transaction. A partial failure leaves earlier locations valid and retryable without
+  converting copy operations into new source observations.
 - A source/hash key favors idempotency over date-based browsing. Acquisition dates remain
   queryable in PostgreSQL; later analytical datasets may use date partitions independently.
+- S3 is a replay/audit Bronze layer. Airflow remains the only orchestration path; S3 events do
+  not start a duplicate normalization pipeline in this slice.
 
 ## Rejected alternatives
 

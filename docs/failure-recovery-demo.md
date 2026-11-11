@@ -99,6 +99,20 @@ status. The expected result is not a fixed row count—the public sources evolve
 queries must return successfully and expose freshness/integrity status alongside the
 investigation product.
 
+## Scenario F — local-to-S3 reconciliation recovery
+
+**Action:** dry-run a valid local artifact and a same-size artifact with the wrong SHA-256;
+then simulate an S3 failure after one prior location has been committed.
+**Expected:** dry-run makes no AWS call and reports the corrupt copy; apply mode propagates the
+S3 error while preserving the earlier location. A retry can reuse the already-created object,
+records only the missing S3 location, and does not increment the logical artifact's
+`seen_count`.
+
+Evidence:
+
+- `tests/unit/test_raw_storage_reconciliation.py`
+- `test_raw_artifact_can_have_local_and_s3_locations`
+
 ## Interpreting results
 
 - `PASS`: command executed and its assertions passed.

@@ -18,7 +18,12 @@ from threatflow.ingestion.cisa_client import CisaClient, CisaGitHistoryClient
 from threatflow.ingestion.cisa_parser import parse_catalog
 from threatflow.models.cisa import CisaKevVulnerability
 from threatflow.models.raw_artifact import RawArtifact
-from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
+from threatflow.raw_storage import (
+    RawArtifactStore,
+    create_raw_artifact_store,
+    create_validated_replica_store,
+    replicate_validated_artifact,
+)
 from threatflow.repository.cisa_change_repository import upsert_changes
 from threatflow.repository.cisa_repository import upsert_records
 from threatflow.repository.raw_artifact_repository import artifact_location_uri, record_artifact
@@ -55,6 +60,7 @@ def ingest_cisa_kev(
     client: CisaClient | None = None,
     settings: Settings | None = None,
     raw_store: RawArtifactStore | None = None,
+    replica_store: RawArtifactStore | None = None,
 ) -> IngestionResult:
     settings = settings or Settings()
     raw_store = raw_store or create_raw_artifact_store(settings)
@@ -72,9 +78,24 @@ def ingest_cisa_kev(
     records = parse_catalog(content)
     engine = create_engine(settings.database_url)
     try:
-        with engine.begin() as connection:
-            from sqlalchemy.orm import Session
+        from sqlalchemy.orm import Session
 
+        with Session(engine) as session:
+            previous_count = (
+                session.scalar(select(func.count()).select_from(CisaKevVulnerability)) or 0
+            )
+        if previous_count >= 20 and len(records) < previous_count * 0.8:
+            raise ValueError(
+                f"CISA KEV catalog shrank unexpectedly: "
+                f"{len(records)} versus {previous_count} stored"
+            )
+        if replica_store is None:
+            replica_store = create_validated_replica_store(settings)
+        replica = replicate_validated_artifact(
+            replica_store, artifact, content, acquired_at
+        )
+
+        with engine.begin() as connection:
             with Session(bind=connection) as session:
                 known_artifact = session.scalar(
                     select(RawArtifact.id).where(
@@ -105,15 +126,8 @@ def ingest_cisa_kev(
                     request_mode="snapshot",
                     record_count=len(records),
                     ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
+                    additional_locations=(replica,) if replica is not None else (),
                 )
-                previous = (
-                    session.scalar(select(func.count()).select_from(CisaKevVulnerability)) or 0
-                )
-                if previous >= 20 and len(records) < previous * 0.8:
-                    raise ValueError(
-                        f"CISA KEV catalog shrank unexpectedly: "
-                        f"{len(records)} versus {previous} stored"
-                    )
                 changes = []
                 if known_artifact is None:
                     previous = None
@@ -161,6 +175,7 @@ def backfill_cisa_kev(
     client: CisaGitHistoryClient | None = None,
     settings: Settings | None = None,
     raw_store: RawArtifactStore | None = None,
+    replica_store: RawArtifactStore | None = None,
 ) -> CisaHistoryResult:
     """Store validated official Git snapshots without regressing the current-state table."""
     if start_date > end_date:
@@ -234,6 +249,11 @@ def backfill_cisa_kev(
                 break
             if records is None:
                 continue
+            if replica_store is None:
+                replica_store = create_validated_replica_store(settings)
+            replica = replicate_validated_artifact(
+                replica_store, artifact, content, acquired_at
+            )
             with engine.begin() as connection:
                 from sqlalchemy.orm import Session
 
@@ -248,6 +268,7 @@ def backfill_cisa_kev(
                         record_count=len(records),
                         ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
                         source_revision=commit.sha,
+                        additional_locations=(replica,) if replica is not None else (),
                     )
             total_records += len(records)
             total_bytes += len(content)

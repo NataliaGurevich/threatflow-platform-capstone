@@ -138,6 +138,16 @@ valid small file may be incomplete; EPSS is neither impact nor organisational ri
 | `storage_version_id` | nullable text | S3 version returned by a versioned bucket |
 | `first_recorded_at`, `last_verified_at` | timestamptz | Location discovery and latest successful verification times |
 
+The `threatflow-reconcile-raw-storage` command selects local locations without an S3 peer.
+Dry-run validates size and SHA-256 without AWS calls. Apply mode records an S3 location only
+after the adapter has verified the stored object's checksum and metadata; it does not change the
+logical artifact's `seen_count`.
+
+For new ingestion, optional validated replication records both local and S3 locations in the
+same manifest transaction and still increments `seen_count` once. Local storage occurs before
+parsing so rejected bytes remain available for diagnosis. S3 is an accepted Bronze location:
+only payloads that pass all source-specific validation and completeness checks are promoted.
+
 ## Relationships and quality interpretation
 
 - `nvd_cves.cve_id`, `cisa_kev_vulnerabilities.cve_id`, `epss_current.cve_id`,

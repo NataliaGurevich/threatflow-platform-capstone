@@ -7,8 +7,10 @@ import threatflow.raw_storage as raw_storage
 from threatflow.config import Settings
 from threatflow.local_raw_storage import LocalRawArtifactStore
 from threatflow.raw_storage import (
+    RawArtifactRef,
     calculate_sha256,
     create_raw_artifact_store,
+    replicate_validated_artifact,
     store_raw_artifact,
 )
 
@@ -92,6 +94,62 @@ def test_factory_builds_configured_local_store(tmp_path) -> None:
 
     assert isinstance(store, LocalRawArtifactStore)
     assert store.root == tmp_path
+
+
+def test_validated_replication_preserves_exact_logical_identity(tmp_path) -> None:
+    content = b'{"cve":"CVE-2026-0001"}\n'
+    local = LocalRawArtifactStore(tmp_path).store("nvd", content, ACQUIRED_AT, "json")
+
+    class ReplicaStore:
+        backend = "s3"
+
+        def store(self, source, raw, acquired_at, extension, *, content_type=None):
+            assert raw == content
+            return RawArtifactRef(
+                source=source,
+                sha256=sha256(raw).hexdigest(),
+                uri=f"s3://bronze/bronze/source={source}/sha256={local.sha256}.json",
+                extension=extension,
+                content_type=content_type,
+                size_bytes=len(raw),
+                created=True,
+                backend="s3",
+                bucket="bronze",
+                object_key=f"bronze/source={source}/sha256={local.sha256}.json",
+            )
+
+    replica = replicate_validated_artifact(ReplicaStore(), local, content, ACQUIRED_AT)
+
+    assert replica is not None
+    assert (replica.source, replica.sha256, replica.size_bytes) == (
+        local.source,
+        local.sha256,
+        local.size_bytes,
+    )
+
+
+def test_validated_replication_rejects_changed_identity(tmp_path) -> None:
+    local = LocalRawArtifactStore(tmp_path).store("nvd", b"raw", ACQUIRED_AT, "json")
+
+    class WrongReplicaStore:
+        backend = "s3"
+
+        def store(self, source, content, acquired_at, extension, *, content_type=None):
+            return RawArtifactRef(
+                source=source,
+                sha256="0" * 64,
+                uri="s3://bronze/wrong.json",
+                extension=extension,
+                content_type=content_type,
+                size_bytes=len(content),
+                created=True,
+                backend="s3",
+                bucket="bronze",
+                object_key="wrong.json",
+            )
+
+    with pytest.raises(ValueError, match="identity"):
+        replicate_validated_artifact(WrongReplicaStore(), local, b"raw", ACQUIRED_AT)
 
 
 def test_previous_local_store_import_path_remains_compatible() -> None:
