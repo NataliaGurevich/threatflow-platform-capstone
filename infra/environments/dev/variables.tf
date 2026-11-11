@@ -20,3 +20,20 @@ variable "noncurrent_version_retention_days" {
   type        = number
   default     = 90
 }
+
+variable "create_airflow_local_identity" {
+  description = "Create the local-only IAM user used by Airflow through temporary aws login credentials."
+  type        = bool
+  default     = false
+}
+
+variable "airflow_local_user_name" {
+  description = "IAM user name for local Airflow development; no access keys are created."
+  type        = string
+  default     = "threatflow-airflow-local"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9+=,.@_-]{1,64}$", var.airflow_local_user_name))
+    error_message = "airflow_local_user_name must be a valid IAM user name."
+  }
+}

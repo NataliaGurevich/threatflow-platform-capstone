@@ -6,3 +6,8 @@ bucket_name = "threatflow-bronze-dev-123456789012"
 
 bronze_prefix                     = "bronze"
 noncurrent_version_retention_days = 90
+
+# Local Docker Compose only. This creates an IAM user with no access keys and attaches
+# the Bronze object policy plus AWS SignInLocalDevelopmentAccess.
+create_airflow_local_identity = false
+airflow_local_user_name       = "threatflow-airflow-local"

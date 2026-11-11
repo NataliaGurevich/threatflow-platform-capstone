@@ -1,0 +1,15 @@
+services:
+  airflow-scheduler:
+    environment:
+      AWS_PROFILE: ${THREATFLOW_AWS_PROFILE:-threatflow-airflow}
+      AWS_CONFIG_FILE: /home/airflow/.aws/config
+      AWS_LOGIN_CACHE_DIRECTORY: /home/airflow/.aws/login/cache
+      AWS_EC2_METADATA_DISABLED: "true"
+    volumes:
+      - type: bind
+        source: ${THREATFLOW_AWS_CONFIG_FILE:?Set THREATFLOW_AWS_CONFIG_FILE in .env}
+        target: /home/airflow/.aws/config
+        read_only: true
+      - type: bind
+        source: ${THREATFLOW_AWS_LOGIN_CACHE_DIR:?Set THREATFLOW_AWS_LOGIN_CACHE_DIR in .env}
+        target: /home/airflow/.aws/login/cache

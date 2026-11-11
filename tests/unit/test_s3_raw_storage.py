@@ -219,7 +219,7 @@ def test_read_rejects_locator_outside_configured_bucket_or_prefix() -> None:
 
 def test_s3_settings_require_bucket_and_factory_builds_s3_store(monkeypatch) -> None:
     with pytest.raises(ValidationError, match="s3_bronze_bucket"):
-        Settings(raw_storage_backend="s3")
+        Settings(raw_storage_backend="s3", _env_file=None)
 
     fake_client = object()
     monkeypatch.setattr(
@@ -242,7 +242,7 @@ def test_s3_settings_require_bucket_and_factory_builds_s3_store(monkeypatch) -> 
 
 def test_replication_settings_require_local_primary_and_build_s3_target(monkeypatch) -> None:
     with pytest.raises(ValidationError, match="s3_bronze_bucket"):
-        Settings(s3_replication_enabled=True)
+        Settings(s3_replication_enabled=True, _env_file=None)
     with pytest.raises(ValidationError, match="raw_storage_backend='local'"):
         Settings(
             raw_storage_backend="s3",

@@ -17,3 +17,8 @@ output "bronze_access_policy_arn" {
   description = "IAM policy to attach to the future ingestion runtime role."
   value       = module.bronze_storage.access_policy_arn
 }
+
+output "airflow_local_user_arn" {
+  description = "Local Airflow IAM user ARN, or null when the identity is disabled."
+  value       = try(aws_iam_user.airflow_local[0].arn, null)
+}
