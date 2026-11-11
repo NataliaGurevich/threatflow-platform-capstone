@@ -1,7 +1,7 @@
 """PostgreSQL 17 repository integration tests in disposable Testcontainers."""
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import create_engine, select, text
@@ -15,7 +15,10 @@ from testcontainers.postgres import PostgresContainer
 from threatflow.models.base import Base
 from threatflow.models.cisa import CisaKevVulnerability
 from threatflow.models.cisa_change import CisaKevChange
+from threatflow.models.raw_artifact import RawArtifact, RawArtifactLocation
+from threatflow.raw_storage import RawArtifactRef
 from threatflow.repository.cisa_repository import upsert_records
+from threatflow.repository.raw_artifact_repository import artifact_location_uri, record_artifact
 
 
 def record(number: int, **changes):
@@ -77,6 +80,86 @@ def test_transaction_rollback(session):
             upsert_records(session, [record(1), record(2, vendor_project="FAIL")], batch_size=1)
     session.rollback()
     assert session.scalars(select(CisaKevVulnerability)).all() == []
+
+
+def test_raw_artifact_can_have_local_and_s3_locations(session):
+    acquired_at = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    digest = "a" * 64
+    local = RawArtifactRef(
+        source="cisa_kev",
+        sha256=digest,
+        uri="data/raw/cisa_kev/year=2026/month=11/artifact.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="local",
+    )
+    s3 = RawArtifactRef(
+        source="cisa_kev",
+        sha256=digest,
+        uri=f"s3://threatflow-bronze/bronze/source=cisa_kev/sha256={digest}.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="s3",
+        bucket="threatflow-bronze",
+        object_key=f"bronze/source=cisa_kev/sha256={digest}.json",
+        version_id="version-1",
+    )
+
+    record_artifact(session, local, acquired_at, request_mode="snapshot")
+    record_artifact(session, s3, acquired_at, request_mode="snapshot")
+    session.flush()
+    session.expire_all()
+
+    artifact = session.scalar(select(RawArtifact).where(RawArtifact.sha256 == digest))
+    locations = session.scalars(
+        select(RawArtifactLocation)
+        .where(RawArtifactLocation.artifact_id == artifact.id)
+        .order_by(RawArtifactLocation.backend)
+    ).all()
+
+    assert artifact.storage_path == local.uri
+    assert artifact.seen_count == 2
+    assert [(location.backend, location.uri) for location in locations] == [
+        ("local", local.uri),
+        ("s3", s3.uri),
+    ]
+    assert artifact_location_uri(artifact, "local") == local.uri
+    assert artifact_location_uri(artifact, "s3") == s3.uri
+    assert locations[1].storage_version_id == "version-1"
+
+
+def test_s3_location_requires_structured_bucket_and_key(session):
+    acquired_at = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    local = RawArtifactRef(
+        source="cisa_kev",
+        sha256="b" * 64,
+        uri="data/raw/cisa_kev/artifact.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="local",
+    )
+    record_artifact(session, local, acquired_at)
+    session.flush()
+    artifact = session.scalar(select(RawArtifact).where(RawArtifact.sha256 == local.sha256))
+    session.add(
+        RawArtifactLocation(
+            artifact_id=artifact.id,
+            backend="s3",
+            uri="s3://missing-structured-fields/object.json",
+            first_recorded_at=acquired_at,
+            last_verified_at=acquired_at,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
 
 
 def test_daily_ingestion_writes_incremental_changes_atomically(session, tmp_path, monkeypatch):

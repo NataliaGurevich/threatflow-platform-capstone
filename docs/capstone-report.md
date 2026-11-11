@@ -33,7 +33,7 @@ specific organisation is vulnerable.
 | Architecture and trade-offs | `docs/data-pipeline-treatflow.md` |
 | Data model and grain | `docs/data-model.md`, SQLAlchemy models and Alembic migrations |
 | Reproducible ingestion | Source-specific services under `src/threatflow/ingestion/` and Airflow DAGs |
-| Raw/replay storage | `src/threatflow/raw_storage.py`, `raw_artifacts` manifest |
+| Raw/replay storage | `raw_storage.py` contract, local/S3 adapters, artifact manifest |
 | Incremental processing | NVD modified checkpoints, CISA hashes/diffs and EPSS source dates |
 | Data quality | Parser/completeness tests and `analytics/data_quality_*.sql` |
 | Error/recovery demonstration | `docs/failure-recovery-demo.md`, unit/integration tests and backfill CLI |
@@ -138,8 +138,8 @@ use disposable containers; read-only analytical mode uses the already-running lo
 ## Limitations and future improvements
 
 - Add asset inventory and product matching before making organisation-specific claims.
-- Implement the S3 `RawArtifactStore` adapter and reconcile it against the implemented local
-  backend; the backend-neutral interface and Terraform Bronze module are already present.
+- Deploy and reconcile the implemented S3 `RawArtifactStore` against local Raw locations only
+  after reviewing the Terraform plan and verifying object counts, sizes, and checksums.
 - Move large historical analytical storage to Parquet/Iceberg only after the local capstone
   is fully demonstrated and cost/volume measurements justify it.
 - Add CI execution of lint/unit tests and an environment with Docker for integration and

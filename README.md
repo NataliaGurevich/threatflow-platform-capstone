@@ -42,8 +42,10 @@ The source schema has `cisa_kev_vulnerabilities`, `nvd_cves`, and `epss_scores`.
 ## Raw data storage (Phase 2)
 
 Ingestion uses the backend-neutral `RawArtifactStore` contract to preserve original response
-bytes before parsing or loading. `LocalRawArtifactStore` is the currently enabled backend; the
+bytes before parsing or loading. `LocalRawArtifactStore` is the default backend; the
 legacy `threatflow.raw_storage.store_raw_artifact` function remains as a compatibility wrapper.
+The contract and factory live in `raw_storage.py`; filesystem and AWS behavior are isolated in
+`local_raw_storage.py` and `s3_raw_storage.py` respectively.
 The local adapter partitions artifacts by source and acquisition month and names each file with
 the SHA-256 digest of the exact bytes:
 
@@ -56,13 +58,22 @@ data/raw/
 
 Artifacts are immutable: a complete temporary file is atomically published, and an existing identical artifact is reused. Changed bytes have a different digest and produce a separate file. Raw files are excluded from Git; `.gitignore` preserves the directory placeholder.
 
-`raw_artifacts` is the searchable manifest for these files. It records source, SHA-256, physical path, size, first acquisition, last observation, observation count, request mode and interval, page offset, record count, and the Airflow run ID when available. Deduplication is global per source and hash, including across acquisition months: an identical response observed later reuses its original file and updates `last_seen_at`/`seen_count`; changed bytes create a new immutable artifact. NVD historical request dates remain queryable in the manifest while the physical path continues to represent the first acquisition month.
+`raw_artifacts` is the searchable logical manifest: one row per source and SHA-256 with size,
+acquisition, observation, and request lineage. `raw_artifact_locations` records independently
+verified physical copies, so the same logical artifact can have both a local path and an S3 URI.
+Deduplication is global per source and hash: identical bytes reuse the artifact and upsert the
+corresponding backend location; changed bytes create a new immutable artifact.
 
-Set `THREATFLOW_RAW_STORAGE_BACKEND=local` and configure the storage root with
-`THREATFLOW_RAW_DATA_DIR` in `.env`; it defaults to `data/raw`. Copy `.env.example` to `.env`
-and change the value if you want a different local directory. Run unit tests with
-`uv run python -m pytest`; storage tests use temporary directories and do not connect to
-PostgreSQL. S3 is an accepted target design, not an enabled or deployed backend yet; see the
+Set `THREATFLOW_RAW_STORAGE_BACKEND=local` and configure `THREATFLOW_RAW_DATA_DIR`; this remains
+the credential-free default. The implemented S3 adapter can instead use
+`THREATFLOW_RAW_STORAGE_BACKEND=s3`, `THREATFLOW_S3_BRONZE_BUCKET`,
+`THREATFLOW_S3_BRONZE_PREFIX`, and `THREATFLOW_AWS_REGION`. It writes deterministic keys such as
+`bronze/source=epss/sha256=<sha256>.csv.gz`, requires timezone-aware acquisition timestamps,
+and verifies object checksum, size, content type, encryption, and metadata before returning
+success. The adapter is covered by stubbed unit tests, but no AWS resources are created or
+selected by this code change. Migration `0008` backfills every existing `storage_path` as a
+local location. Do not switch a source until the migration is applied and the required S3
+locations have been reconciled; see the
 [S3 Bronze ADR](docs/adr/0001-s3-bronze-storage.md).
 
 ## Phase 1 local setup

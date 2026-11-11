@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,8 +14,11 @@ class Settings(BaseSettings):
     postgres_db: str = "threatflow"
     postgres_user: str = "threatflow"
     postgres_password: SecretStr = SecretStr("")
-    raw_storage_backend: Literal["local"] = "local"
+    raw_storage_backend: Literal["local", "s3"] = "local"
     raw_data_dir: str = "data/raw"
+    s3_bronze_bucket: str | None = None
+    s3_bronze_prefix: str = "bronze"
+    aws_region: str | None = None
     nvd_api_key: SecretStr | None = None
     github_token: SecretStr | None = None
     nvd_api_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -27,6 +30,14 @@ class Settings(BaseSettings):
     http_connect_timeout: float = 10
     http_read_timeout: float = 60
     http_retries: int = 3
+
+    @model_validator(mode="after")
+    def validate_raw_storage_settings(self) -> "Settings":
+        if self.raw_storage_backend == "s3" and not self.s3_bronze_bucket:
+            raise ValueError("s3_bronze_bucket is required when raw_storage_backend is 's3'")
+        if not self.s3_bronze_prefix.strip("/"):
+            raise ValueError("s3_bronze_prefix must contain at least one non-slash character")
+        return self
 
     @property
     def database_url(self) -> str:

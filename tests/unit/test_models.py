@@ -11,6 +11,7 @@ def test_expected_business_and_operational_tables_are_defined() -> None:
         "epss_daily_summaries",
         "ingestion_checkpoints",
         "raw_artifacts",
+        "raw_artifact_locations",
     }
 
 
@@ -33,6 +34,9 @@ def test_expected_primary_keys() -> None:
         "score_date"
     ]
     assert [column.name for column in Base.metadata.tables["raw_artifacts"].primary_key] == ["id"]
+    assert [
+        column.name for column in Base.metadata.tables["raw_artifact_locations"].primary_key
+    ] == ["id"]
     assert [column.name for column in Base.metadata.tables["cisa_kev_changes"].primary_key] == [
         "id"
     ]

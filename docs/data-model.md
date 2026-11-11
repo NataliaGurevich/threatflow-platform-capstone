@@ -23,6 +23,18 @@ erDiagram
         string source_revision
     }
 
+    RAW_ARTIFACT_LOCATIONS {
+        bigint id PK
+        bigint artifact_id FK
+        string backend
+        text uri
+        string storage_bucket
+        text storage_key
+        text storage_version_id
+        timestamptz first_recorded_at
+        timestamptz last_verified_at
+    }
+
     INGESTION_CHECKPOINTS {
         string source PK
         timestamptz covered_until
@@ -89,6 +101,7 @@ erDiagram
     CISA_KEV_VULNERABILITIES ||..o{ CISA_KEV_CHANGES : "change history by cve_id"
     EPSS_CURRENT ||..o{ EPSS_SCORES : "latest from retained dates"
     EPSS_DAILY_SUMMARIES ||..o{ EPSS_SCORES : "aggregate by score_date"
+    RAW_ARTIFACTS ||--o{ RAW_ARTIFACT_LOCATIONS : "has verified copies"
 ```
 
 Dotted relationships are logical analytical joins, not database foreign keys. A source may
@@ -98,8 +111,9 @@ legitimately publish a CVE before or without another source.
 
 | Layer | Table/storage | Grain | Role |
 | --- | --- | --- | --- |
-| Raw | `data/raw/<source>/year=YYYY/month=MM/<sha256>.<ext>` | One exact unique payload per source/hash | Replayable immutable evidence |
+| Raw | Local path or `s3://bucket/bronze/source=<source>/sha256=<sha256>.<ext>` | One exact unique payload per source/hash | Replayable immutable evidence |
 | Manifest | `raw_artifacts` | One source/hash | Searchable Raw provenance and observation metadata |
+| Location | `raw_artifact_locations` | One artifact/backend | Independently verified local and S3 copies |
 | Coverage | `ingestion_checkpoints` | One source | Last completely committed NVD modified-window boundary |
 | Current | `nvd_cves` | One CVE | Latest accepted NVD projection |
 | Current | `cisa_kev_vulnerabilities` | One CVE | Latest accepted KEV state |
@@ -113,12 +127,13 @@ legitimately publish a CVE before or without another source.
 
 1. Raw exact bytes are persisted before parsing or normalized database writes.
 2. `(source, sha256)` and all business keys are idempotent under retry.
-3. NVD current state changes only when the incoming `last_modified` is not older.
-4. EPSS history is keyed by source date; `epss_current` cannot regress to an older date.
-5. CISA accepts only non-empty, structurally valid, count-consistent snapshots and rejects
+3. One logical artifact may have both local and S3 locations; reads never silently cross backend.
+4. NVD current state changes only when the incoming `last_modified` is not older.
+5. EPSS history is keyed by source date; `epss_current` cannot regress to an older date.
+6. CISA accepts only non-empty, structurally valid, count-consistent snapshots and rejects
    implausible shrinkage against an established current table.
-6. An incomplete NVD pagination traversal does not advance the coverage checkpoint.
-7. CISA omissions do not physically delete current rows.
+7. An incomplete NVD pagination traversal does not advance the coverage checkpoint.
+8. CISA omissions do not physically delete current rows.
 8. Operational errors roll back normalized writes and propagate to Airflow as failed tasks.
 
 ## Analytical model

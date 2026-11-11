@@ -15,9 +15,9 @@ read an artifact for replay or CISA change derivation.
 
 ## Decision
 
-Ingestion depends on the `RawArtifactStore` protocol. `LocalRawArtifactStore` remains the only
-enabled backend during the first implementation slice. `S3RawArtifactStore` will be introduced
-in a separate slice after its bucket contract is available.
+Ingestion depends on the `RawArtifactStore` protocol. `LocalRawArtifactStore` remains the
+default. `S3RawArtifactStore` implements the accepted bucket contract behind the same protocol;
+selecting it requires explicit settings and does not deploy infrastructure.
 
 The S3 object key will be deterministic and content-addressed:
 
@@ -35,6 +35,11 @@ Acquisition time, request interval, source revision, row count, and run ID belon
 PostgreSQL manifest and selected S3 object metadata rather than in the object key. Therefore,
 observing the same source bytes on another date reuses the same logical object.
 
+`raw_artifacts` represents that logical source/hash identity. Physical copies are separate rows
+in `raw_artifact_locations`, with at most one current verified locator per backend. A single
+artifact may therefore remain available locally while an independently verified S3 copy is
+added, enabling a reversible rollout without duplicating its observation lineage.
+
 Terraform will manage the AWS resources. The initial module will create one development Bronze
 bucket with public access blocked, ACLs disabled, versioning, default encryption, TLS-only
 access, lifecycle rules, and least-privilege IAM. Terraform state, credentials, and personal
@@ -44,7 +49,7 @@ The rollout sequence is:
 
 1. Introduce the storage protocol and preserve local behavior.
 2. Add and statically validate the Terraform module without applying it.
-3. Add the S3 adapter and unit tests with stubbed AWS calls.
+3. Add the S3 adapter and unit tests with stubbed AWS calls. **Complete.**
 4. Review `terraform plan`, then explicitly approve creation of development resources.
 5. Reconcile hashes and sizes for EPSS before rolling out CISA and NVD.
 
@@ -54,9 +59,12 @@ The rollout sequence is:
 - Source ingestion does not import boto3 or Terraform-specific code.
 - Storage failures continue to fail ingestion before normalized database writes.
 - CISA replay reads through the storage contract instead of directly opening a local path.
-- The current `raw_artifacts.storage_path` column remains unchanged in this slice. A versioned
-  migration to a backend-neutral locator and optional S3 version metadata is required before
-  enabling S3.
+- Migration `0008_raw_artifact_locations` keeps the legacy `storage_path` column for
+  compatibility, creates the one-to-many locations table, and backfills existing paths as
+  `local` locations.
+- Existing local manifest rows are not uploaded or rewritten automatically. Reconciliation is
+  required before switching an ingestion source; backend-specific reads fail clearly if the
+  requested location has not been verified.
 - A source/hash key favors idempotency over date-based browsing. Acquisition dates remain
   queryable in PostgreSQL; later analytical datasets may use date partitions independently.
 

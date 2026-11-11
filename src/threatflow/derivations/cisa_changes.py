@@ -10,13 +10,14 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from threatflow.config import Settings
 from threatflow.ingestion.cisa_parser import parse_catalog
 from threatflow.models.cisa_change import CisaKevChange
 from threatflow.models.raw_artifact import RawArtifact
 from threatflow.raw_storage import create_raw_artifact_store
+from threatflow.repository.raw_artifact_repository import artifact_location_uri
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,7 @@ def rebuild_cisa_changes(settings: Settings | None = None) -> CisaChangesResult:
         with Session(engine) as read_session:
             artifacts = read_session.scalars(
                 select(RawArtifact)
+                .options(selectinload(RawArtifact.locations))
                 .where(
                     RawArtifact.source == "cisa_kev",
                     RawArtifact.request_mode.in_(("git_history", "snapshot")),
@@ -144,7 +146,9 @@ def rebuild_cisa_changes(settings: Settings | None = None) -> CisaChangesResult:
             session = Session(bind=connection)
             session.execute(delete(CisaKevChange))
             for artifact in artifacts:
-                records = parse_catalog(raw_store.read(artifact.storage_path))
+                records = parse_catalog(
+                    raw_store.read(artifact_location_uri(artifact, raw_store.backend))
+                )
                 current = {record["cve_id"]: json_safe_record(record) for record in records}
                 is_git_revision = (
                     artifact.request_mode == "git_history" and artifact.source_revision is not None

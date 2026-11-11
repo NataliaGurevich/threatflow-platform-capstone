@@ -91,7 +91,8 @@ valid small file may be incomplete; EPSS is neither impact nor organisational ri
 | `epss_scores` | One row per `(cve_id, score_date)` | Detailed recent EPSS history | Retains the configured number of inclusive source dates, 30 by default |
 | `epss_current` | Latest score per `cve_id` | Fast current-score joins | Older backfills cannot regress `score_date` |
 | `epss_daily_summaries` | One aggregate per `score_date` | Long-lived daily counts and score/risk aggregates | Retained after detailed rows age out |
-| `raw_artifacts` | One manifest row per `(source, sha256)` | Provenance, immutable Raw location, request metadata and observations | Re-observation updates `last_seen_at`/`seen_count`; bytes are not overwritten |
+| `raw_artifacts` | One manifest row per `(source, sha256)` | Logical Raw identity, request metadata and observations | Re-observation updates `last_seen_at`/`seen_count`; bytes are not overwritten |
+| `raw_artifact_locations` | One current location per `(artifact_id, backend)` | Verified local and/or S3 physical copies | Location re-verification updates locator/version and `last_verified_at` |
 | `ingestion_checkpoints` | One row per `source` | Durable successful coverage boundary | NVD checkpoint advances only after a complete successful commit |
 
 ## Important application fields
@@ -116,7 +117,7 @@ valid small file may be incomplete; EPSS is neither impact nor organisational ri
 | Field | Database type | Definition |
 | --- | --- | --- |
 | `source`, `sha256` | string | Unique content identity within a source |
-| `storage_path` | text | Local backend path; planned to become a backend-neutral URI |
+| `storage_path` | text | Legacy first locator retained for compatibility; active reads use locations |
 | `first_acquired_at`, `last_seen_at` | timestamptz | First storage and latest observation times |
 | `seen_count` | integer | Number of committed manifest observations |
 | `request_mode` | string | Examples: snapshot, published, modified, git history |
@@ -126,14 +127,24 @@ valid small file may be incomplete; EPSS is neither impact nor organisational ri
 | `ingestion_run_id` | string | Airflow run lineage when available |
 | `source_revision` | string | Upstream Git/source revision when applicable |
 
+### `raw_artifact_locations`
+
+| Field | Database type | Definition |
+| --- | --- | --- |
+| `artifact_id` | bigint FK | Logical artifact in `raw_artifacts`; cascades on artifact deletion |
+| `backend` | string | Storage implementation (`local` or `s3`) |
+| `uri` | text | Local path or `s3://bucket/key` locator |
+| `storage_bucket`, `storage_key` | nullable string/text | Required structured locator values for S3 rows |
+| `storage_version_id` | nullable text | S3 version returned by a versioned bucket |
+| `first_recorded_at`, `last_verified_at` | timestamptz | Location discovery and latest successful verification times |
+
 ## Relationships and quality interpretation
 
 - `nvd_cves.cve_id`, `cisa_kev_vulnerabilities.cve_id`, `epss_current.cve_id`,
   `epss_scores.cve_id` and `cisa_kev_changes.cve_id` may be joined analytically.
 - No database foreign key is imposed between source tables because each publisher has a
   different scope and publication schedule.
-- `raw_artifacts` provides lineage but is not a parent table with a foreign key from every
-  normalized row; request metadata can cover a page or complete snapshot containing many
-  business records.
+- `raw_artifacts` owns zero or more physical `raw_artifact_locations`, but is not a parent table
+  for every normalized business row; request metadata can cover a page or complete snapshot.
 - `ingestion_checkpoints` describes source-window coverage, not row-level lineage.
 

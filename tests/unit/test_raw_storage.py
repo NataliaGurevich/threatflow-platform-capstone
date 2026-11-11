@@ -3,9 +3,10 @@ from hashlib import sha256
 
 import pytest
 
+import threatflow.raw_storage as raw_storage
 from threatflow.config import Settings
+from threatflow.local_raw_storage import LocalRawArtifactStore
 from threatflow.raw_storage import (
-    LocalRawArtifactStore,
     calculate_sha256,
     create_raw_artifact_store,
     store_raw_artifact,
@@ -93,11 +94,15 @@ def test_factory_builds_configured_local_store(tmp_path) -> None:
     assert store.root == tmp_path
 
 
+def test_previous_local_store_import_path_remains_compatible() -> None:
+    assert raw_storage.LocalRawArtifactStore is LocalRawArtifactStore
+
+
 def test_atomic_publish_cleans_temporary_file_after_failure(tmp_path, monkeypatch) -> None:
     def fail_link(_source, _destination):
         raise OSError("simulated publish failure")
 
-    monkeypatch.setattr("threatflow.raw_storage.os.link", fail_link)
+    monkeypatch.setattr("threatflow.local_raw_storage.os.link", fail_link)
     with pytest.raises(OSError, match="simulated publish failure"):
         store_raw_artifact("nvd", b"raw", ACQUIRED_AT, "json", raw_data_dir=tmp_path)
 

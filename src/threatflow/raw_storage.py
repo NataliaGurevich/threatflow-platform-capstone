@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +32,9 @@ class RawArtifactRef:
     size_bytes: int
     created: bool
     backend: str
+    bucket: str | None = None
+    object_key: str | None = None
+    version_id: str | None = None
 
     @property
     def path(self) -> Path:
@@ -49,6 +50,8 @@ RawArtifactResult = RawArtifactRef
 
 class RawArtifactStore(Protocol):
     """Store and retrieve exact raw bytes without exposing backend SDK details."""
+
+    backend: str
 
     def store(
         self,
@@ -68,122 +71,60 @@ def calculate_sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-class LocalRawArtifactStore:
-    """Atomic, content-addressed raw storage on a local filesystem."""
+def validate_raw_artifact_input(
+    source: str,
+    content: bytes,
+    acquired_at: datetime,
+    extension: str,
+    content_type: str | None = None,
+) -> tuple[str, str]:
+    """Validate shared storage inputs and return normalized extension and content type."""
+    if not isinstance(source, str) or not _SAFE_SOURCE.fullmatch(source):
+        raise ValueError("source must contain only lowercase letters, digits, and underscores")
+    if source not in _SOURCE_EXTENSIONS:
+        raise ValueError(f"unsupported source: {source}")
+    normalized_extension = extension.removeprefix(".").lower()
+    if normalized_extension not in _SOURCE_EXTENSIONS[source]:
+        raise ValueError(f"unsupported extension for {source}: {extension}")
+    if not isinstance(content, bytes):
+        raise TypeError("content must be bytes")
+    if not isinstance(acquired_at, datetime):
+        raise TypeError("acquired_at must be a datetime")
+    return normalized_extension, content_type or _CONTENT_TYPES[normalized_extension]
 
-    backend = "local"
 
-    def __init__(self, raw_data_dir: str | Path):
-        self.root = Path(raw_data_dir)
+def supported_raw_sources() -> tuple[str, ...]:
+    """Return source names accepted by every raw storage backend."""
+    return tuple(_SOURCE_EXTENSIONS)
 
-    def store(
-        self,
-        source: str,
-        content: bytes,
-        acquired_at: datetime,
-        extension: str,
-        *,
-        content_type: str | None = None,
-    ) -> RawArtifactRef:
-        """Store bytes once under their source, acquisition month, and content hash."""
-        if not isinstance(source, str) or not _SAFE_SOURCE.fullmatch(source):
-            raise ValueError("source must contain only lowercase letters, digits, and underscores")
-        if source not in _SOURCE_EXTENSIONS:
-            raise ValueError(f"unsupported source: {source}")
-        normalized_extension = extension.removeprefix(".").lower()
-        if normalized_extension not in _SOURCE_EXTENSIONS[source]:
-            raise ValueError(f"unsupported extension for {source}: {extension}")
-        if not isinstance(content, bytes):
-            raise TypeError("content must be bytes")
-        if not isinstance(acquired_at, datetime):
-            raise TypeError("acquired_at must be a datetime")
 
-        resolved_content_type = content_type or _CONTENT_TYPES[normalized_extension]
-        digest = calculate_sha256(content)
-        destination = (
-            self.root
-            / source
-            / f"year={acquired_at.year:04d}"
-            / f"month={acquired_at.month:02d}"
-            / f"{digest}.{normalized_extension}"
-        )
-        existing = next(
-            self.root.glob(f"{source}/year=*/month=*/{digest}.{normalized_extension}"),
-            None,
-        )
-        if existing is not None:
-            if existing.read_bytes() != content:
-                raise OSError(f"existing artifact does not match its content hash: {existing}")
-            return RawArtifactRef(
-                source,
-                digest,
-                str(existing),
-                normalized_extension,
-                resolved_content_type,
-                len(content),
-                False,
-                self.backend,
-            )
-        destination.parent.mkdir(parents=True, exist_ok=True)
+def __getattr__(name: str):
+    """Lazily preserve the former LocalRawArtifactStore import path."""
+    if name == "LocalRawArtifactStore":
+        from threatflow.local_raw_storage import LocalRawArtifactStore
 
-        temp_path: Path | None = None
-        created = False
-        try:
-            with tempfile.NamedTemporaryFile(
-                dir=destination.parent, prefix=".tmp-", delete=False
-            ) as tmp:
-                temp_path = Path(tmp.name)
-                tmp.write(content)
-                tmp.flush()
-                os.fsync(tmp.fileno())
-            try:
-                # A hard link publishes the complete file atomically and fails if the
-                # content-addressed destination already exists, so it cannot overwrite.
-                os.link(temp_path, destination)
-                created = True
-            except FileExistsError:
-                if destination.read_bytes() != content:
-                    raise OSError(
-                        f"existing artifact does not match its content hash: {destination}"
-                    ) from None
-        finally:
-            if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
-
-        return RawArtifactRef(
-            source,
-            digest,
-            str(destination),
-            normalized_extension,
-            resolved_content_type,
-            len(content),
-            created,
-            self.backend,
-        )
-
-    def read(self, artifact: RawArtifactRef | str) -> bytes:
-        """Read a local locator, including one recorded under a previous raw root."""
-        locator = artifact.uri if isinstance(artifact, RawArtifactRef) else artifact
-        stored = Path(locator)
-        if stored.is_file():
-            return stored.read_bytes()
-
-        for source in _SOURCE_EXTENSIONS:
-            try:
-                source_index = stored.parts.index(source)
-            except ValueError:
-                continue
-            candidate = self.root.joinpath(*stored.parts[source_index:])
-            if candidate.is_file():
-                return candidate.read_bytes()
-        raise FileNotFoundError(f"cannot resolve raw artifact: {locator}")
+        return LocalRawArtifactStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def create_raw_artifact_store(settings: Settings | None = None) -> RawArtifactStore:
     """Build the configured raw storage backend."""
     settings = settings or Settings()
     if settings.raw_storage_backend == "local":
+        from threatflow.local_raw_storage import LocalRawArtifactStore
+
         return LocalRawArtifactStore(settings.raw_data_dir)
+    if settings.raw_storage_backend == "s3":
+        from threatflow.s3_raw_storage import S3RawArtifactStore
+
+        return S3RawArtifactStore(
+            bucket=settings.s3_bronze_bucket or "",
+            prefix=settings.s3_bronze_prefix,
+            region_name=settings.aws_region,
+            connect_timeout=settings.http_connect_timeout,
+            read_timeout=settings.http_read_timeout,
+            max_attempts=settings.http_retries + 1,
+        )
     raise ValueError(f"unsupported raw storage backend: {settings.raw_storage_backend}")
 
 
@@ -195,6 +136,8 @@ def store_raw_artifact(
     *,
     raw_data_dir: str | Path | None = None,
 ) -> RawArtifactResult:
-    """Compatibility wrapper around :class:`LocalRawArtifactStore`."""
+    """Compatibility wrapper around the local raw storage adapter."""
+    from threatflow.local_raw_storage import LocalRawArtifactStore
+
     root = Path(raw_data_dir) if raw_data_dir is not None else Path(Settings().raw_data_dir)
     return LocalRawArtifactStore(root).store(source, content, acquired_at, extension)

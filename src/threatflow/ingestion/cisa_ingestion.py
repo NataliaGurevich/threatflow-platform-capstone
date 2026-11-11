@@ -21,7 +21,7 @@ from threatflow.models.raw_artifact import RawArtifact
 from threatflow.raw_storage import RawArtifactStore, create_raw_artifact_store
 from threatflow.repository.cisa_change_repository import upsert_changes
 from threatflow.repository.cisa_repository import upsert_records
-from threatflow.repository.raw_artifact_repository import record_artifact
+from threatflow.repository.raw_artifact_repository import artifact_location_uri, record_artifact
 
 LOGGER = logging.getLogger(__name__)
 
@@ -121,7 +121,9 @@ def ingest_cisa_kev(
                         previous = {
                             record["cve_id"]: json_safe_record(record)
                             for record in parse_catalog(
-                                raw_store.read(previous_artifact.storage_path)
+                                raw_store.read(
+                                    artifact_location_uri(previous_artifact, raw_store.backend)
+                                )
                             )
                         }
                     current = {record["cve_id"]: json_safe_record(record) for record in records}
