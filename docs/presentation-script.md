@@ -147,10 +147,11 @@ Open one example row and explain which source contributes each visible signal.
 **Say:**
 
 > I deliberately kept the implemented capstone reproducible on Docker Compose instead of
-> adding distributed technology without evidence. The next scale step is moving Raw and
-> historical analytics to S3 and Parquet or Iceberg, while keeping PostgreSQL for current
-> serving. Before that migration I would complete a measured restore drill and add asset
-> inventory so the product can make organisation-specific prioritisation claims.
+> adding distributed technology without evidence. Immutable Raw is now replicated to S3 and a
+> measured exact-byte restore has been demonstrated. The next scale step is partitioned Parquet
+> plus Athena for historical analytics, while PostgreSQL remains the current-state serving
+> layer. Asset inventory is still required before the product can make organisation-specific
+> prioritisation claims.
 
 Close with:
 

@@ -142,6 +142,37 @@ def test_raw_artifact_can_have_local_and_s3_locations(session):
     assert locations[1].storage_version_id == "version-1"
 
 
+def test_reconciliation_excludes_invalid_cisa_git_snapshots(session):
+    acquired_at = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    valid = RawArtifactRef(
+        source="cisa_kev",
+        sha256="d" * 64,
+        uri="data/raw/cisa_kev/valid.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="local",
+    )
+    invalid = RawArtifactRef(
+        source="cisa_kev",
+        sha256="e" * 64,
+        uri="data/raw/cisa_kev/invalid.json",
+        extension="json",
+        content_type="application/json",
+        size_bytes=42,
+        created=True,
+        backend="local",
+    )
+    record_artifact(session, valid, acquired_at, request_mode="git_history")
+    record_artifact(session, invalid, acquired_at, request_mode="git_history_invalid")
+    session.flush()
+
+    candidates = list_reconciliation_candidates(session, "cisa_kev")
+
+    assert [candidate.sha256 for candidate in candidates] == [valid.sha256]
+
+
 def test_one_observation_records_local_and_s3_locations_without_double_counting(session):
     acquired_at = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
     digest = "c" * 64

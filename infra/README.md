@@ -2,7 +2,8 @@
 
 Terraform manages the small AWS extension to the local ThreatFlow capstone. The first module
 defines a protected Amazon S3 General Purpose bucket for immutable Bronze artifacts and a
-least-privilege IAM policy that can later be attached to an ingestion runtime role.
+least-privilege IAM policy. The development root can also create and attach that policy to the
+dedicated local Airflow identity.
 
 No Terraform command in this repository should receive long-lived credentials. Use a temporary
 AWS CLI/SSO session when a real plan is eventually required. Never commit `terraform.tfvars`,
@@ -45,7 +46,7 @@ terraform -chdir=infra/modules/bronze_storage test
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
 
-## Future development deployment
+## Development deployment and changes
 
 Copy the example without committing the result:
 

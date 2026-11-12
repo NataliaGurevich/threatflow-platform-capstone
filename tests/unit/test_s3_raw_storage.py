@@ -231,6 +231,7 @@ def test_s3_settings_require_bucket_and_factory_builds_s3_store(monkeypatch) -> 
             s3_bronze_bucket=BUCKET,
             s3_bronze_prefix="/bronze/",
             aws_region="eu-central-1",
+            _env_file=None,
         )
     )
 
@@ -260,4 +261,4 @@ def test_replication_settings_require_local_primary_and_build_s3_target(monkeypa
 
     assert isinstance(store, S3RawArtifactStore)
     assert store.client is fake_client
-    assert create_validated_replica_store(Settings()) is None
+    assert create_validated_replica_store(Settings(_env_file=None)) is None

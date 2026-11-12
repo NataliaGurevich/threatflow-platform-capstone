@@ -112,6 +112,30 @@ Evidence:
 
 - `tests/unit/test_raw_storage_reconciliation.py`
 - `test_raw_artifact_can_have_local_and_s3_locations`
+- `test_reconciliation_excludes_invalid_cisa_git_snapshots`
+
+## Scenario G — restore exact bytes from S3 Bronze
+
+**Action:** select an artifact that has a verified `raw_artifact_locations` S3 row and run
+`threatflow-restore-raw-artifact` with its source and SHA-256.
+**Expected:** the recorded S3 object version is downloaded, its byte size and SHA-256 are
+verified, and the exact bytes are atomically published to the configured local Raw directory.
+With `--target-dir`, the drill does not change the manifest. Without it, the command refreshes
+the local physical location without incrementing `seen_count`. Neither mode writes normalized
+application tables. A corrupt download fails before any local write.
+
+```bash
+uv run threatflow-restore-raw-artifact \
+  --source epss \
+  --sha256 <64-character-sha256> \
+  --target-dir /tmp/threatflow-bronze-restore-demo
+```
+
+Evidence:
+
+- `tests/unit/test_raw_storage_restore.py`
+- a successful non-invasive drill result with `manifest_updated=false`
+- matching SHA-256 in the manifest, S3 URI and restored local filename
 
 ## Interpreting results
 

@@ -27,6 +27,8 @@ from threatflow.s3_raw_storage import build_s3_object_key
 
 LOGGER = logging.getLogger(__name__)
 
+_CISA_BRONZE_REQUEST_MODES = ("snapshot", "git_history")
+
 
 @dataclass(frozen=True)
 class ReconciliationCandidate:
@@ -111,6 +113,10 @@ def list_reconciliation_candidates(
         .where(RawArtifact.source == source, ~has_s3_location)
         .order_by(RawArtifact.id)
     )
+    if source == "cisa_kev":
+        statement = statement.where(
+            RawArtifact.request_mode.in_(_CISA_BRONZE_REQUEST_MODES)
+        )
     if limit is not None:
         statement = statement.limit(limit)
 

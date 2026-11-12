@@ -24,6 +24,7 @@ The capstone evidence is organised here:
 - [5–10 minute presentation script](docs/presentation-script.md)
 - [Implemented and target architecture](docs/data-pipeline-treatflow.md)
 - [S3 Bronze storage decision](docs/adr/0001-s3-bronze-storage.md)
+- [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
 
@@ -97,6 +98,24 @@ deterministic target URI, and returns a non-zero status when any local copy is m
 corrupt. After the bucket exists and the plan is reviewed, replace `--dry-run` with `--apply`.
 Apply mode verifies each S3 object through the adapter and commits its location independently;
 therefore a retry skips locations already completed and does not increment `seen_count`.
+CISA reconciliation promotes only validated `snapshot` and `git_history` artifacts;
+diagnostic `git_history_invalid` payloads remain local and are never Bronze candidates.
+
+Restore one manifest-selected S3 artifact to the configured local Raw directory:
+
+```bash
+uv run threatflow-restore-raw-artifact \
+  --source epss \
+  --sha256 <64-character-sha256> \
+  --target-dir /tmp/threatflow-bronze-restore-demo
+```
+
+The command downloads the recorded S3 object version, verifies its byte size and SHA-256,
+and publishes it atomically through `LocalRawArtifactStore`. With `--target-dir`, the drill does
+not change the manifest. Without that option, the command restores to `THREATFLOW_RAW_DATA_DIR`
+and refreshes only the local physical location. Neither mode increments `seen_count`, fetches a
+source feed, or writes normalized tables. Do not remove local Raw data until the drill and the
+intended local-retention policy have been documented.
 
 S3 Bronze is the immutable replay/audit layer, not a second normalization pipeline. A successful
 upload records its checksum, URI, version, and verification time in PostgreSQL; the existing
