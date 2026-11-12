@@ -249,6 +249,7 @@ def test_replication_settings_require_local_primary_and_build_s3_target(monkeypa
             raw_storage_backend="s3",
             s3_replication_enabled=True,
             s3_bronze_bucket=BUCKET,
+            _env_file=None,
         )
 
     fake_client = object()
@@ -256,7 +257,7 @@ def test_replication_settings_require_local_primary_and_build_s3_target(monkeypa
         "threatflow.s3_raw_storage.boto3.client", lambda *args, **kwargs: fake_client
     )
     store = create_validated_replica_store(
-        Settings(s3_replication_enabled=True, s3_bronze_bucket=BUCKET)
+        Settings(s3_replication_enabled=True, s3_bronze_bucket=BUCKET, _env_file=None)
     )
 
     assert isinstance(store, S3RawArtifactStore)

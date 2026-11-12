@@ -97,8 +97,9 @@ def transform_epss_bytes(
     source_sha256: str,
     source_uri: str,
     acquired_at: datetime,
-    expected_record_count: int,
+    expected_record_count: int | None,
     output_root: str | Path,
+    source_version_id: str | None = None,
 ) -> EpssSilverResult:
     """Validate exact EPSS Raw bytes and publish one committed Parquet partition."""
     if not _SHA256.fullmatch(source_sha256):
@@ -108,7 +109,7 @@ def transform_epss_bytes(
         raise ValueError(
             f"EPSS Raw SHA-256 mismatch: expected {source_sha256}, got {actual_sha256}"
         )
-    if expected_record_count < 1:
+    if expected_record_count is not None and expected_record_count < 1:
         raise ValueError("expected_record_count must be at least 1")
     if acquired_at.tzinfo is None or acquired_at.utcoffset() is None:
         raise ValueError("acquired_at must be timezone-aware")
@@ -118,7 +119,7 @@ def transform_epss_bytes(
     )
     parquet_path = partition_dir / PARQUET_FILE_NAME
     manifest_path = partition_dir / MANIFEST_FILE_NAME
-    if manifest_path.exists():
+    if manifest_path.exists() and expected_record_count is not None:
         return _reuse_committed_partition(
             parquet_path,
             manifest_path,
@@ -128,24 +129,34 @@ def transform_epss_bytes(
         )
 
     records = parse_dataset(content, score_date)
-    if len(records) != expected_record_count:
+    if expected_record_count is not None and len(records) != expected_record_count:
         raise ValueError(
             f"EPSS manifest count mismatch: expected {expected_record_count}, "
             f"parsed {len(records)}"
         )
     validate_completeness(len(records), score_date)
+    record_count = len(records)
+
+    if manifest_path.exists():
+        return _reuse_committed_partition(
+            parquet_path,
+            manifest_path,
+            score_date=score_date,
+            source_sha256=source_sha256,
+            expected_record_count=record_count,
+        )
 
     schema = epss_silver_schema(
         source_sha256=source_sha256,
         score_date=score_date,
-        record_count=len(records),
+        record_count=record_count,
     )
     partition_dir.mkdir(parents=True, exist_ok=True)
     if parquet_path.exists():
         parquet_sha256, parquet_size = _verify_parquet(
             parquet_path,
             schema=schema,
-            expected_record_count=len(records),
+            expected_record_count=record_count,
         )
         _publish_manifest(
             manifest_path,
@@ -154,16 +165,17 @@ def transform_epss_bytes(
                 source_sha256=source_sha256,
                 source_uri=source_uri,
                 acquired_at=acquired_at,
-                record_count=len(records),
+                record_count=record_count,
                 parquet_sha256=parquet_sha256,
                 parquet_size_bytes=parquet_size,
+                source_version_id=source_version_id,
             ),
         )
         return EpssSilverResult(
             DATASET_NAME,
             score_date,
             source_sha256,
-            len(records),
+            record_count,
             str(parquet_path),
             str(manifest_path),
             parquet_sha256,
@@ -196,7 +208,7 @@ def transform_epss_bytes(
         parquet_sha256, parquet_size = _verify_parquet(
             temporary_path,
             schema=schema,
-            expected_record_count=len(records),
+            expected_record_count=record_count,
         )
         try:
             os.link(temporary_path, parquet_path)
@@ -204,7 +216,7 @@ def transform_epss_bytes(
             existing_sha256, existing_size = _verify_parquet(
                 parquet_path,
                 schema=schema,
-                expected_record_count=len(records),
+                expected_record_count=record_count,
             )
             if (existing_sha256, existing_size) != (parquet_sha256, parquet_size):
                 raise FileExistsError(
@@ -222,16 +234,17 @@ def transform_epss_bytes(
             source_sha256=source_sha256,
             source_uri=source_uri,
             acquired_at=acquired_at,
-            record_count=len(records),
+            record_count=record_count,
             parquet_sha256=parquet_sha256,
             parquet_size_bytes=parquet_size,
+            source_version_id=source_version_id,
         ),
     )
     return EpssSilverResult(
         DATASET_NAME,
         score_date,
         source_sha256,
-        len(records),
+        record_count,
         str(parquet_path),
         str(manifest_path),
         parquet_sha256,
@@ -352,19 +365,23 @@ def _manifest_payload(
     record_count: int,
     parquet_sha256: str,
     parquet_size_bytes: int,
+    source_version_id: str | None = None,
 ) -> dict[str, Any]:
+    source = {
+        "name": "epss",
+        "sha256": source_sha256,
+        "uri": source_uri,
+        "acquired_at": acquired_at.astimezone(UTC).isoformat(),
+    }
+    if source_version_id is not None:
+        source["version_id"] = source_version_id
     return {
         "dataset": DATASET_NAME,
         "schema_version": SCHEMA_VERSION,
         "transform_version": TRANSFORM_VERSION,
         "score_date": score_date.isoformat(),
         "record_count": record_count,
-        "source": {
-            "name": "epss",
-            "sha256": source_sha256,
-            "uri": source_uri,
-            "acquired_at": acquired_at.astimezone(UTC).isoformat(),
-        },
+        "source": source,
         "parquet": {
             "file": PARQUET_FILE_NAME,
             "sha256": parquet_sha256,

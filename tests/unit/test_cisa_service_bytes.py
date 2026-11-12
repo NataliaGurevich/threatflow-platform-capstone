@@ -57,7 +57,7 @@ def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="empty"):
         ingest_cisa_kev(
             client=Client(),
-            settings=Settings(raw_data_dir=str(tmp_path)),
+            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
             raw_store=RawStore(),
             replica_store=NoReplica(),
         )

@@ -145,7 +145,7 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
             )
 
     monkeypatch.setattr(nvd_ingestion, "record_artifact", record)
-    settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1)
+    settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1, _env_file=None)
     result = nvd_ingestion.ingest_nvd_cves(
         client=Client(),
         settings=settings,
@@ -165,7 +165,7 @@ def test_total_change_fails_after_raw_storage(monkeypatch, tmp_path):
         def fetch_page(self, start, end, index):
             return payload(index, 2 if index == 0 else 3, [cve(id=f"CVE-2024-{index + 1:04d}")])
 
-    settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1)
+    settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1, _env_file=None)
 
     class NoReplica:
         backend = "s3"

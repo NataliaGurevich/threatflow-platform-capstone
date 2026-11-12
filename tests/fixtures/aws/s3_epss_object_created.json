@@ -1,0 +1,20 @@
+{
+  "Records": [
+    {
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "awsRegion": "eu-central-1",
+      "s3": {
+        "bucket": {
+          "name": "threatflow-bronze-test"
+        },
+        "object": {
+          "key": "bronze%2Fsource%3Depss%2Fsha256%3D72712a72b024097560870489796477accba7ae309b2ee58d96c5aed9f7c29e5a.csv.gz",
+          "size": 116,
+          "versionId": "bronze-version-1",
+          "sequencer": "00691D000000000001"
+        }
+      }
+    }
+  ]
+}

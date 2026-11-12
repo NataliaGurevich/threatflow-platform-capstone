@@ -267,7 +267,11 @@ def test_reconciliation_dry_run_uses_manifest_and_local_bytes_without_aws(
 
     monkeypatch.setattr("threatflow.s3_raw_storage.boto3.client", reject_aws_client)
     result = raw_storage_reconciliation.reconcile_raw_storage(
-        Settings(raw_data_dir=str(tmp_path), s3_bronze_bucket="threatflow-bronze"),
+        Settings(
+            raw_data_dir=str(tmp_path),
+            s3_bronze_bucket="threatflow-bronze",
+            _env_file=None,
+        ),
         source="epss",
         dry_run=True,
     )
@@ -314,7 +318,7 @@ def test_daily_ingestion_writes_incremental_changes_atomically(session, tmp_path
     client = Client()
     engine = session.get_bind()
     monkeypatch.setattr(cisa_ingestion, "create_engine", lambda _: engine)
-    settings = Settings(raw_data_dir=str(tmp_path), database_url="unused")
+    settings = Settings(raw_data_dir=str(tmp_path), database_url="unused", _env_file=None)
 
     first = cisa_ingestion.ingest_cisa_kev(client=client, settings=settings)
     client.content = snapshot("Updated", include_second=True)

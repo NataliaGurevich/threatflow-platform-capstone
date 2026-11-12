@@ -147,7 +147,9 @@ def test_current_ingestion_requires_metadata_and_preserves_raw(tmp_path):
             return gz("cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n")
 
     with pytest.raises(ValueError, match="no authoritative score_date"):
-        ingest_epss(client=Client(), settings=Settings(raw_data_dir=str(tmp_path)))
+        ingest_epss(
+            client=Client(), settings=Settings(raw_data_dir=str(tmp_path), _env_file=None)
+        )
     assert list(tmp_path.rglob("*.csv.gz"))
 
 
@@ -187,6 +189,6 @@ def test_incomplete_historical_archive_never_opens_database(tmp_path, monkeypatc
         ingest_epss(
             score_date=date(2021, 5, 1),
             client=Client(),
-            settings=Settings(raw_data_dir=str(tmp_path)),
+            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
             replica_store=NoReplica(),
         )

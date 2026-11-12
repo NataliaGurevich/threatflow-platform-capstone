@@ -24,6 +24,7 @@ The capstone evidence is organised here:
 - [5–10 minute presentation script](docs/presentation-script.md)
 - [Implemented and target architecture](docs/data-pipeline-treatflow.md)
 - [S3 Bronze storage decision](docs/adr/0001-s3-bronze-storage.md)
+- [EPSS event-driven Silver decision](docs/adr/0002-epss-event-driven-silver.md)
 - [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
@@ -117,13 +118,13 @@ and refreshes only the local physical location. Neither mode increments `seen_co
 source feed, or writes normalized tables. Do not remove local Raw data until the drill and the
 intended local-retention policy have been documented.
 
-S3 Bronze is the immutable replay/audit layer, not a second normalization pipeline. A successful
-upload records its checksum, URI, version, and verification time in PostgreSQL; the existing
-ingestion run remains responsible for PostgreSQL UPSERTs. S3 event-driven processing is deferred
-to avoid duplicate orchestration alongside Airflow. Before deleting local copies, define a
-retention policy and demonstrate restore from S3. Cloud deployments should monitor failed
-uploads and object verification, enable appropriate audit/access telemetry, and review the
-storage, request, and telemetry costs.
+S3 Bronze is the immutable replay/audit layer. A successful upload records its checksum, URI,
+version, and verification time in PostgreSQL; the existing ingestion run remains responsible for
+local PostgreSQL UPSERTs. The EPSS Silver application handler can independently consume a
+versioned S3 notification, but no S3 notification, queue, or Lambda resource is deployed yet.
+Before deleting local copies, define a retention policy and demonstrate restore from S3. Cloud
+deployments should monitor failed uploads and object verification, enable appropriate audit/access
+telemetry, and review the storage, request, and telemetry costs.
 
 ## EPSS Silver Parquet (first slice)
 
@@ -162,6 +163,37 @@ Parquet checksum, size and compression. A repeat run verifies and reuses the com
 A different Raw hash for an existing score date fails instead of silently overwriting history;
 correction/partition-replacement policy is intentionally deferred until the AWS incremental
 runtime is selected. Silver files are ignored by Git and are not uploaded by this command.
+
+The incremental AWS application path is implemented without a PostgreSQL dependency. The Lambda
+entry point `threatflow.transformation.epss_silver_lambda.lambda_handler` accepts either a direct
+S3 notification or an S3 notification wrapped by SQS. It requires an object `versionId`, reads
+that exact Bronze version, and verifies size, SHA-256, S3 checksum, encryption, content type, and
+the existing `source`, `sha256`, and `acquired-at` metadata. It derives the authoritative score
+date from the EPSS header, reuses the same parser, completeness rules, schema, and Parquet
+transformer as local execution, and publishes:
+
+```text
+s3://<silver-bucket>/silver/epss_scores/score_date=YYYY-MM-DD/
+├── epss.parquet
+└── _manifest.json
+```
+
+Both objects use conditional immutable writes; `_manifest.json` is written last as the commit
+marker. A repeated notification verifies and reuses the committed partition. A failure after the
+Parquet upload but before the manifest is safely retryable, while different Raw bytes for an
+already committed score date fail as a conflict. SQS records return partial batch failures so a
+future event-source mapping can retry only failed messages. The checked-in fixture test exercises
+the handler contract without AWS credentials:
+
+```bash
+.venv/bin/python -m pytest -q tests/unit/test_epss_silver_lambda.py
+```
+
+`THREATFLOW_S3_BRONZE_BUCKET` and `THREATFLOW_S3_SILVER_BUCKET` identify the allowed input and
+output buckets; the corresponding prefix settings default to `bronze` and `silver`. Terraform for
+the Silver bucket, SQS/DLQ, Lambda package, IAM, and S3 notification is the next deployment slice.
+The PostgreSQL-based `epss_silver_request` resolver remains useful for local audit and manual
+lineage inspection, but it is not part of the automatic AWS event path.
 
 ## Phase 1 local setup
 

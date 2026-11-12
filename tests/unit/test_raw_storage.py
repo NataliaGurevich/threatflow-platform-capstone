@@ -90,7 +90,7 @@ def test_local_store_reads_reference_and_relocated_manifest_path(tmp_path) -> No
 
 
 def test_factory_builds_configured_local_store(tmp_path) -> None:
-    store = create_raw_artifact_store(Settings(raw_data_dir=str(tmp_path)))
+    store = create_raw_artifact_store(Settings(raw_data_dir=str(tmp_path), _env_file=None))
 
     assert isinstance(store, LocalRawArtifactStore)
     assert store.root == tmp_path

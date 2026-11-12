@@ -29,7 +29,7 @@ def test_unchanged_snapshot_is_stored_locally_and_does_not_run_ingestion(tmp_pat
 
     result = watch_cisa_kev(
         client=Client(content),
-        settings=Settings(raw_data_dir=str(tmp_path)),
+        settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
         snapshot_exists=lambda digest, settings: digest == calculate_sha256(content),
         ingest=fail_ingestion,
     )
@@ -62,7 +62,7 @@ def test_new_snapshot_reuses_locally_stored_bytes_in_existing_ingestion(tmp_path
         captured["settings"] = settings
         return ingested
 
-    settings = Settings(raw_data_dir=str(tmp_path))
+    settings = Settings(raw_data_dir=str(tmp_path), _env_file=None)
     result = watch_cisa_kev(
         client=Client(content),
         settings=settings,
@@ -84,7 +84,7 @@ def test_new_invalid_snapshot_propagates_ingestion_failure_but_keeps_raw(tmp_pat
     with pytest.raises(ValueError, match="invalid CISA"):
         watch_cisa_kev(
             client=Client(b"invalid"),
-            settings=Settings(raw_data_dir=str(tmp_path)),
+            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
             snapshot_exists=lambda digest, settings: False,
             ingest=reject,
         )
@@ -104,4 +104,6 @@ def test_handler_rejects_artifact_that_does_not_match_event(tmp_path):
     )
 
     with pytest.raises(ValueError, match="does not match"):
-        handle_cisa_artifact_observed(event, settings=Settings(raw_data_dir=str(tmp_path)))
+        handle_cisa_artifact_observed(
+            event, settings=Settings(raw_data_dir=str(tmp_path), _env_file=None)
+        )

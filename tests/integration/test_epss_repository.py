@@ -134,7 +134,7 @@ def test_ingestion_service_current_and_historical_in_isolated_postgres(monkeypat
         engine = create_engine(postgres.get_connection_url().replace("psycopg2", "psycopg"))
         Base.metadata.create_all(engine)
         monkeypatch.setattr(epss_ingestion, "create_engine", lambda _: engine)
-        settings = Settings(raw_data_dir=str(tmp_path))
+        settings = Settings(raw_data_dir=str(tmp_path), _env_file=None)
         current = epss_ingestion.ingest_epss(client=Client(), settings=settings)
         historic = epss_ingestion.ingest_epss(
             client=Client(), settings=settings, score_date=date(2024, 1, 1)
@@ -170,7 +170,7 @@ def test_old_ingestion_uses_summary_only_path(monkeypatch, tmp_path):
 
         result = epss_ingestion.ingest_epss(
             client=Client(),
-            settings=Settings(raw_data_dir=str(tmp_path)),
+            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
             score_date=date(2021, 4, 14),
         )
 

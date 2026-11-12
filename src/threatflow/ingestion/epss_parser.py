@@ -7,6 +7,19 @@ from bisect import bisect_right
 from datetime import date
 
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+_SCORE_DATE = re.compile(r"score_date:(\d{4}-\d{2}-\d{2})")
+
+
+def extract_score_date(content: bytes) -> date:
+    """Return the authoritative score date embedded in an EPSS gzip header."""
+    try:
+        first_line = gzip.decompress(content).decode("utf-8-sig").splitlines()[0]
+    except (OSError, EOFError, UnicodeDecodeError, IndexError) as exc:
+        raise ValueError("cannot establish EPSS score date from source metadata") from exc
+    match = _SCORE_DATE.search(first_line)
+    if not first_line.startswith("#") or match is None:
+        raise ValueError("EPSS source has no authoritative score_date metadata")
+    return date.fromisoformat(match.group(1))
 
 
 def parse_dataset(content: bytes, score_date: date) -> list[dict]:
@@ -16,7 +29,7 @@ def parse_dataset(content: bytes, score_date: date) -> list[dict]:
         raise ValueError("invalid or truncated EPSS gzip CSV") from exc
     source_lines = text.splitlines()
     if source_lines and source_lines[0].startswith("#"):
-        match = re.search(r"score_date:(\d{4}-\d{2}-\d{2})", source_lines[0])
+        match = _SCORE_DATE.search(source_lines[0])
         if match and date.fromisoformat(match.group(1)) != score_date:
             raise ValueError("EPSS source score_date does not match requested date")
         source_lines = source_lines[1:]

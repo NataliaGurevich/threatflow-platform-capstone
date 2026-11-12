@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gzip
 import logging
 import os
 from dataclasses import dataclass
@@ -12,7 +11,7 @@ from sqlalchemy import create_engine, func, select
 
 from threatflow.config import Settings
 from threatflow.ingestion.epss_client import EpssClient
-from threatflow.ingestion.epss_parser import parse_dataset
+from threatflow.ingestion.epss_parser import extract_score_date, parse_dataset
 from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
 from threatflow.raw_storage import (
     RawArtifactStore,
@@ -80,18 +79,7 @@ def ingest_epss(
     raw = client.fetch(score_date)
     artifact = raw_store.store("epss", raw, acquired, ".csv.gz")
     if score_date is None:
-        try:
-            first = gzip.decompress(raw).decode("utf-8-sig").splitlines()[0]
-        except (OSError, EOFError, UnicodeDecodeError, IndexError) as exc:
-            raise ValueError(
-                "cannot establish current EPSS score date from source metadata"
-            ) from exc
-        import re
-
-        match = re.search(r"score_date:(\d{4}-\d{2}-\d{2})", first)
-        if not match:
-            raise ValueError("current EPSS source has no authoritative score_date metadata")
-        resolved = date.fromisoformat(match.group(1))
+        resolved = extract_score_date(raw)
     else:
         resolved = score_date
     records = parse_dataset(raw, resolved)
