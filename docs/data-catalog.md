@@ -81,6 +81,39 @@ normalised asset identifiers.
 Known limitations: publication may lag the beginning of the UTC score date; a syntactically
 valid small file may be incomplete; EPSS is neither impact nor organisational risk.
 
+## Analytical file datasets
+
+### `silver/epss_scores`
+
+**Status:** local partition transformation and idempotent historical bootstrap implemented and
+verified. AWS Silver publication is not implemented yet.
+
+**Format:** Apache Parquet with ZSTD level 3 compression.
+
+**Grain:** one CVE on one EPSS source score date.
+
+**Natural key:** `(cve_id, score_date)`.
+
+**Partition:** `score_date=YYYY-MM-DD`; one `epss.parquet` file per source day.
+
+**Commit marker:** `_manifest.json`; consumers must not treat a partition without this marker as
+published.
+
+| Field | Arrow/Parquet type | Nullable | Definition |
+| --- | --- | --- | --- |
+| `cve_id` | string | no | Validated CVE identifier |
+| `score_date` | `date32` | no | Source-effective EPSS date, not acquisition date |
+| `epss_score` | `float64` | no | Exploitation probability in `[0,1]` |
+| `percentile` | `float64` | no | Relative rank in `[0,1]` |
+| `source_sha256` | string | no | Exact accepted Bronze artifact that produced the row |
+
+The Parquet schema metadata records dataset, schema version, transform version, source SHA-256,
+score date and record count. The commit manifest additionally records the accepted Raw URI,
+acquisition time, Parquet SHA-256, file size and compression. The transformation verifies Raw
+SHA-256, parser rules, manifest row count and EPSS completeness before publication. Reprocessing
+the same source/version verifies and reuses the partition; a different source hash for the same
+date fails until an explicit correction policy is implemented.
+
 ## Application and control tables
 
 | Table | Grain and key | Purpose | Update/retention behavior |

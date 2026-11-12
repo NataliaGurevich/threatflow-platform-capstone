@@ -125,6 +125,44 @@ retention policy and demonstrate restore from S3. Cloud deployments should monit
 uploads and object verification, enable appropriate audit/access telemetry, and review the
 storage, request, and telemetry costs.
 
+## EPSS Silver Parquet (first slice)
+
+The first Silver transformation resolves one accepted EPSS artifact by SHA-256 from the Raw
+manifest, reads its verified local copy, reuses the ingestion parser and completeness rules, and
+publishes one typed ZSTD-compressed Parquet file for the source score date:
+
+```text
+data/silver/epss_scores/score_date=YYYY-MM-DD/
+├── epss.parquet
+└── _manifest.json
+```
+
+Run one artifact locally:
+
+```bash
+uv run threatflow-build-epss-silver --sha256 <64-character-raw-sha256>
+```
+
+Plan and run an idempotent bootstrap over all date-specific EPSS Raw artifacts:
+
+```bash
+uv run threatflow-bootstrap-epss-silver --dry-run
+uv run threatflow-bootstrap-epss-silver --apply --limit 10
+uv run threatflow-bootstrap-epss-silver --apply
+```
+
+`--start-date` and `--end-date` select an inclusive source-date range. Dry-run verifies local Raw
+size and SHA-256 plus any already committed Silver partition without writing files. Apply processes
+one date at a time and stops on the first failure. Each `_manifest.json` is an atomic checkpoint, so
+rerunning the same command verifies/reuses completed dates and resumes safely. The result reports
+calendar gaps separately; bootstrap does not invent missing source dates.
+
+The commit manifest records the Raw URI and SHA-256, record count, schema/transform versions,
+Parquet checksum, size and compression. A repeat run verifies and reuses the committed partition.
+A different Raw hash for an existing score date fails instead of silently overwriting history;
+correction/partition-replacement policy is intentionally deferred until the AWS incremental
+runtime is selected. Silver files are ignored by Git and are not uploaded by this command.
+
 ## Phase 1 local setup
 
 Install uv, copy `.env.example` to `.env`, set a local PostgreSQL password, and run `uv sync --group dev`. Start the database with `docker compose up -d postgres`, then run `uv run alembic upgrade head`. Migration and PostgreSQL integration verification must use a dedicated isolated database.

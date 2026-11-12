@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.27,<1",
     "boto3>=1.35,<2",
     "botocore[crt]>=1.35,<2",
+    "pyarrow>=26.0,<27",
 ]
 
 [project.scripts]
@@ -21,6 +22,8 @@ threatflow-watch-cisa = "threatflow.ingestion.cisa_watcher:main"
 threatflow-backup-databases = "threatflow.database_backup:main"
 threatflow-reconcile-raw-storage = "threatflow.raw_storage_reconciliation:main"
 threatflow-restore-raw-artifact = "threatflow.raw_storage_restore:main"
+threatflow-build-epss-silver = "threatflow.transformation.epss_silver:main"
+threatflow-bootstrap-epss-silver = "threatflow.transformation.epss_silver_bootstrap:main"
 
 [dependency-groups]
 dev = [

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("")
     raw_storage_backend: Literal["local", "s3"] = "local"
     raw_data_dir: str = "data/raw"
+    silver_data_dir: str = "data/silver"
     s3_replication_enabled: bool = False
     s3_bronze_bucket: str | None = None
     s3_bronze_prefix: str = "bronze"
