@@ -1,0 +1,4 @@
+# boto3 and botocore are supplied by the AWS Lambda Python base image.
+# This hash pins the CPython 3.12 manylinux_2_28 ARM64 wheel used by the image.
+pyarrow==26.0.1 \
+    --hash=sha256:6c18167774fb599d42444b7ac558a893d49e750fb14232b538955e6f0d1d51ea

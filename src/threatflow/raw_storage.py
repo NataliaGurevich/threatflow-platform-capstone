@@ -7,9 +7,10 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from threatflow.config import Settings
+if TYPE_CHECKING:
+    from threatflow.config import Settings
 
 _SOURCE_EXTENSIONS = {"cisa_kev": {"json"}, "nvd": {"json"}, "epss": {"csv", "csv.gz"}}
 _SAFE_SOURCE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -109,6 +110,8 @@ def __getattr__(name: str):
 
 def create_raw_artifact_store(settings: Settings | None = None) -> RawArtifactStore:
     """Build the configured raw storage backend."""
+    from threatflow.config import Settings
+
     settings = settings or Settings()
     if settings.raw_storage_backend == "local":
         from threatflow.local_raw_storage import LocalRawArtifactStore
@@ -130,6 +133,8 @@ def create_raw_artifact_store(settings: Settings | None = None) -> RawArtifactSt
 
 def create_validated_replica_store(settings: Settings | None = None) -> RawArtifactStore | None:
     """Build the optional S3 target used only after source validation succeeds."""
+    from threatflow.config import Settings
+
     settings = settings or Settings()
     if not settings.s3_replication_enabled:
         return None
@@ -184,6 +189,7 @@ def store_raw_artifact(
     raw_data_dir: str | Path | None = None,
 ) -> RawArtifactResult:
     """Compatibility wrapper around the local raw storage adapter."""
+    from threatflow.config import Settings
     from threatflow.local_raw_storage import LocalRawArtifactStore
 
     root = Path(raw_data_dir) if raw_data_dir is not None else Path(Settings().raw_data_dir)

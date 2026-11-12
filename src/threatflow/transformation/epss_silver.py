@@ -11,20 +11,17 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, selectinload
 
-from threatflow.config import Settings
-from threatflow.ingestion.epss_ingestion import validate_completeness
 from threatflow.ingestion.epss_parser import parse_dataset
-from threatflow.local_raw_storage import LocalRawArtifactStore
-from threatflow.models.raw_artifact import RawArtifact
+from threatflow.ingestion.epss_validation import validate_completeness
 from threatflow.raw_storage import calculate_sha256
-from threatflow.repository.raw_artifact_repository import artifact_location_uri
+
+if TYPE_CHECKING:
+    from threatflow.config import Settings
 
 LOGGER = logging.getLogger(__name__)
 
@@ -260,6 +257,8 @@ def build_epss_silver(
     output_root: str | Path | None = None,
 ) -> EpssSilverResult:
     """Resolve one accepted EPSS artifact from PostgreSQL and transform its local bytes."""
+    from threatflow.local_raw_storage import LocalRawArtifactStore
+
     artifact = _load_bronze_input(settings, sha256)
     content = LocalRawArtifactStore(settings.raw_data_dir).read(artifact.read_uri)
     return transform_epss_bytes(
@@ -297,6 +296,12 @@ def verify_committed_epss_partition(
 
 
 def _load_bronze_input(settings: Settings, sha256: str) -> EpssBronzeInput:
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session, selectinload
+
+    from threatflow.models.raw_artifact import RawArtifact
+    from threatflow.repository.raw_artifact_repository import artifact_location_uri
+
     if not _SHA256.fullmatch(sha256):
         raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
     engine = create_engine(settings.database_url)
@@ -540,6 +545,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    from threatflow.config import Settings
+
     args = build_parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:

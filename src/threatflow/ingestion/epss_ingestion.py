@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, func, select
 from threatflow.config import Settings
 from threatflow.ingestion.epss_client import EpssClient
 from threatflow.ingestion.epss_parser import extract_score_date, parse_dataset
+from threatflow.ingestion.epss_validation import validate_completeness
 from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
 from threatflow.raw_storage import (
     RawArtifactStore,
@@ -23,27 +24,6 @@ from threatflow.repository.epss_repository import prune_history, upsert_records,
 from threatflow.repository.raw_artifact_repository import record_artifact
 
 LOGGER = logging.getLogger(__name__)
-
-# Conservative floors by dataset era. The published gzip header has model_version and
-# score_date, but no row count. Revisit these floors as the CVE corpus grows.
-MIN_ROWS_BY_YEAR = {
-    2021: 50_000,
-    2022: 75_000,
-    2023: 100_000,
-    2024: 130_000,
-    2025: 160_000,
-    2026: 180_000,
-}
-
-
-def validate_completeness(count: int, score_date: date, adjacent_count: int | None = None):
-    floor = MIN_ROWS_BY_YEAR.get(score_date.year, MIN_ROWS_BY_YEAR[max(MIN_ROWS_BY_YEAR)])
-    if count < floor or (adjacent_count and count < adjacent_count * 0.8):
-        raise ValueError(
-            f"EPSS dataset incomplete for {score_date}: {count} rows; "
-            f"minimum {floor}, adjacent day {adjacent_count}"
-        )
-
 
 @dataclass(frozen=True)
 class EpssIngestionResult:

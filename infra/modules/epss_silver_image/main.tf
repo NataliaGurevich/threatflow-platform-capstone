@@ -1,0 +1,43 @@
+resource "aws_ecr_repository" "this" {
+  name                 = var.repository_name
+  image_tag_mutability = "IMMUTABLE"
+  force_delete         = false
+
+  encryption_configuration {
+    encryption_type = "AES256"
+  }
+
+  # Repository-level basic scanning is intentionally scoped to this capstone repository.
+  # Registry-level enhanced scanning would affect the account and can add Inspector cost.
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = merge(var.tags, {
+    Name     = var.repository_name
+    DataFlow = "epss-bronze-to-silver"
+    Purpose  = "lambda-container-image"
+  })
+}
+
+resource "aws_ecr_lifecycle_policy" "untagged" {
+  repository = aws_ecr_repository.this.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Expire untagged images after ${var.untagged_image_retention_days} days"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = var.untagged_image_retention_days
+        }
+        action = {
+          type = "expire"
+        }
+      },
+    ]
+  })
+}

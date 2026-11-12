@@ -190,10 +190,34 @@ the handler contract without AWS credentials:
 ```
 
 `THREATFLOW_S3_BRONZE_BUCKET` and `THREATFLOW_S3_SILVER_BUCKET` identify the allowed input and
-output buckets; the corresponding prefix settings default to `bronze` and `silver`. Terraform for
-the Silver bucket, SQS/DLQ, Lambda package, IAM, and S3 notification is the next deployment slice.
-The PostgreSQL-based `epss_silver_request` resolver remains useful for local audit and manual
-lineage inspection, but it is not part of the automatic AWS event path.
+output buckets; the corresponding prefix settings default to `bronze` and `silver`. Terraform now
+defines the Silver bucket and a protected SQS Standard queue with a dedicated DLQ. The queues are
+not yet connected to S3 or Lambda, so applying this slice cannot start transformations. Lambda
+container packaging is available under `lambda/epss_silver`: it uses the ARM64 AWS Python 3.12
+base image and a hash-pinned PyArrow 26.0.1 wheel. Terraform creates an immutable, encrypted ECR
+repository with scan-on-push, but does not create the Lambda function until an image has been
+pushed and addressed by digest. Lambda IAM/function configuration, the SQS event-source mapping,
+and the filtered S3 notification remain deployment steps. The PostgreSQL-based
+`epss_silver_request` resolver remains useful for local audit and manual lineage inspection, but
+it is not part of the automatic AWS event path.
+
+Build and smoke-test the Lambda image locally without AWS credentials:
+
+```bash
+docker buildx build \
+  --platform linux/arm64 \
+  --provenance=false \
+  --load \
+  -f lambda/epss_silver/Dockerfile \
+  -t threatflow-epss-silver:local \
+  .
+
+docker run --rm \
+  --platform linux/arm64 \
+  --entrypoint python \
+  threatflow-epss-silver:local \
+  -c 'import pyarrow; from threatflow.transformation.epss_silver_lambda import lambda_handler; print(pyarrow.__version__, lambda_handler.__name__)'
+```
 
 ## Phase 1 local setup
 

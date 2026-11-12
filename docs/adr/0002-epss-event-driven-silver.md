@@ -1,6 +1,6 @@
 # ADR 0002: Independent event-driven EPSS Silver processing
 
-- Status: Accepted application design; AWS deployment pending
+- Status: Application, AWS storage, and queues deployed; image Terraform prepared, event wiring pending
 - Date: 2026-11-12
 
 ## Context
@@ -32,9 +32,11 @@ events reuse a matching committed partition; a different source SHA-256 for the 
 without overwriting the existing partition. SQS partial batch failures provide bounded retries
 and a future DLQ-based recovery demonstration.
 
-The application handler and fixture tests are part of this slice. Terraform resources, container
-packaging, AWS invocation, CloudWatch alarms, and the notification wiring are deliberately left
-for the next deployment slice.
+The application handler and fixture tests are implemented. Terraform now defines the Silver
+bucket, a Standard source queue, and a dedicated DLQ with bounded redrive. Lambda packaging and
+the private ECR repository are implemented with an ARM64 Python 3.12/PyArrow container image.
+Lambda IAM/function configuration, AWS invocation, the S3 notification, SQS event-source mapping,
+and CloudWatch alarms remain deliberately separate deployment slices.
 
 ## Consequences
 

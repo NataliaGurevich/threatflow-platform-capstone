@@ -1,0 +1,7 @@
+**
+!lambda/
+!lambda/epss_silver/
+!lambda/epss_silver/requirements.txt
+!src/
+!src/threatflow/
+!src/threatflow/**
