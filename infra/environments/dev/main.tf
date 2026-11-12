@@ -21,3 +21,15 @@ module "bronze_storage" {
     Owner = "capstone"
   }
 }
+
+module "silver_storage" {
+  source = "../../modules/silver_storage"
+
+  bucket_name                       = var.silver_bucket_name
+  silver_prefix                     = var.silver_prefix
+  noncurrent_version_retention_days = var.silver_noncurrent_version_retention_days
+
+  tags = {
+    Owner = "capstone"
+  }
+}

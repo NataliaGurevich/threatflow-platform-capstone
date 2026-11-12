@@ -2,10 +2,13 @@ aws_region = "eu-central-1"
 
 # S3 bucket names are globally unique. Replace the account fragment with your own
 # stable identifier before creating terraform.tfvars.
-bucket_name = "threatflow-bronze-dev-123456789012"
+bucket_name        = "threatflow-bronze-dev-123456789012"
+silver_bucket_name = "threatflow-silver-dev-123456789012"
 
-bronze_prefix                     = "bronze"
-noncurrent_version_retention_days = 90
+bronze_prefix                            = "bronze"
+noncurrent_version_retention_days        = 90
+silver_prefix                            = "silver"
+silver_noncurrent_version_retention_days = 30
 
 # Local Docker Compose only. This creates an IAM user with no access keys and attaches
 # the Bronze object policy plus AWS SignInLocalDevelopmentAccess.

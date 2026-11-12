@@ -21,6 +21,23 @@ variable "noncurrent_version_retention_days" {
   default     = 90
 }
 
+variable "silver_bucket_name" {
+  description = "Globally unique name for the ThreatFlow development Silver bucket."
+  type        = string
+}
+
+variable "silver_prefix" {
+  description = "Key prefix reserved for Silver datasets."
+  type        = string
+  default     = "silver"
+}
+
+variable "silver_noncurrent_version_retention_days" {
+  description = "Days to retain superseded Silver object versions for recovery."
+  type        = number
+  default     = 30
+}
+
 variable "create_airflow_local_identity" {
   description = "Create the local-only IAM user used by Airflow through temporary aws login credentials."
   type        = bool

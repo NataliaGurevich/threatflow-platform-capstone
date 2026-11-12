@@ -1,9 +1,10 @@
 # ThreatFlow AWS infrastructure
 
-Terraform manages the small AWS extension to the local ThreatFlow capstone. The first module
-defines a protected Amazon S3 General Purpose bucket for immutable Bronze artifacts and a
-least-privilege IAM policy. The development root can also create and attach that policy to the
-dedicated local Airflow identity.
+Terraform manages the small AWS extension to the local ThreatFlow capstone. Separate modules
+define protected Amazon S3 General Purpose buckets for immutable Bronze artifacts and derived
+Silver datasets. The Bronze module also exposes a least-privilege ingestion policy that the
+development root can attach to the dedicated local Airflow identity. Lambda access to Bronze and
+Silver is intentionally deferred to the serverless deployment slice.
 
 No Terraform command in this repository should receive long-lived credentials. Use a temporary
 AWS CLI/SSO session when a real plan is eventually required. Never commit `terraform.tfvars`,
@@ -13,11 +14,12 @@ state files, credentials, or plan files.
 
 ```text
 infra/
-├── modules/bronze_storage/       reusable S3 and IAM module
+├── modules/bronze_storage/       reusable S3 and ingestion IAM module
+├── modules/silver_storage/       reusable S3 Silver module
 └── environments/dev/             development root module
 ```
 
-The module configures:
+Both storage modules configure:
 
 - Block Public Access on all four controls;
 - disabled ACLs through `BucketOwnerEnforced`;
@@ -25,13 +27,19 @@ The module configures:
 - default SSE-S3 encryption;
 - a bucket policy denying non-TLS requests;
 - `prevent_destroy` and `force_destroy = false`;
-- expiry of noncurrent versions after 90 days by default;
 - cleanup of incomplete multipart uploads after seven days;
-- object read/write access only under `bronze/*`, without object deletion.
+- no public access.
+
+Bronze retains noncurrent versions for 90 days by default and exposes object read/write access
+only under `bronze/*`, without object deletion. Silver retains noncurrent versions for 30 days by
+default and publishes committed datasets under `silver/*`; no runtime principal receives Silver
+access in this slice.
 
 Current Bronze objects do not expire. This preserves the governance requirement that exact Raw
 artifacts remain available for audit and replay. The noncurrent-version rule limits accidental
 overwrite history; content-addressed application keys should not normally create such versions.
+Current Silver objects also do not expire because they are the analytical history. Silver remains
+rebuildable from Bronze, so its superseded versions have a shorter default recovery window.
 
 ## Static verification without AWS access
 
@@ -42,6 +50,9 @@ terraform -chdir=infra/environments/dev validate
 
 terraform -chdir=infra/modules/bronze_storage init -backend=false
 terraform -chdir=infra/modules/bronze_storage test
+
+terraform -chdir=infra/modules/silver_storage init -backend=false
+terraform -chdir=infra/modules/silver_storage test
 ```
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
@@ -61,17 +72,19 @@ terraform -chdir=infra/environments/dev plan -out=tfplan
 terraform -chdir=infra/environments/dev show tfplan
 ```
 
-Apply only after reviewing the exact account, region, bucket name, IAM policy, and estimated
-cost impact. `prevent_destroy` intentionally blocks ordinary destruction of the stateful bucket.
+Apply only after reviewing the exact account, region, both bucket names, IAM policies, and
+estimated cost impact. `prevent_destroy` intentionally blocks ordinary destruction of both
+stateful buckets. After apply, set `THREATFLOW_S3_SILVER_BUCKET` to the `silver_bucket_name`
+Terraform output; do not commit the resulting `.env`.
 
 ## Cost and observability
 
 Amazon S3 charges include stored bytes, requests, data transfer, and retained noncurrent object
-versions. SSE-S3 avoids customer-managed KMS key and request charges. Lifecycle operations and
-monitoring can add charges; confirm the selected Region on the official S3 pricing page before
-deployment.
+versions; a second bucket does not introduce a fixed bucket charge. SSE-S3 avoids
+customer-managed KMS key and request charges. Lifecycle operations and monitoring can add
+charges; confirm the selected Region on the official S3 pricing page before deployment.
 
-The first slice does not create a log bucket or trail. Before treating the environment as more
+The storage slices do not create a log bucket or trail. Before treating the environment as more
 than a capstone development deployment, add scoped CloudTrail S3 data events, encrypted log
 destinations, CloudWatch alarms/metrics, and access logging where its additional bucket and
 request cost is justified.
