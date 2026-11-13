@@ -43,6 +43,11 @@ output "epss_silver_queue_url" {
   value       = module.epss_silver_queue.queue_url
 }
 
+output "epss_bronze_notification_bucket" {
+  description = "Bronze bucket publishing filtered EPSS events to SQS."
+  value       = module.epss_bronze_notification.bucket_name
+}
+
 output "epss_silver_dlq_arn" {
   description = "ARN of the EPSS Silver dead-letter queue."
   value       = module.epss_silver_queue.dlq_arn

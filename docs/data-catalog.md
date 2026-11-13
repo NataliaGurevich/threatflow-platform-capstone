@@ -86,7 +86,8 @@ valid small file may be incomplete; EPSS is neither impact nor organisational ri
 ### `silver/epss_scores`
 
 **Status:** local partition transformation and idempotent historical bootstrap implemented and
-verified. AWS Silver publication is not implemented yet.
+verified. The independent AWS S3 Bronze → SQS → Lambda → S3 Silver path is implemented;
+deployment and end-to-end cloud verification are tracked separately.
 
 **Format:** Apache Parquet with ZSTD level 3 compression.
 

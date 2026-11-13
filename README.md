@@ -120,11 +120,11 @@ intended local-retention policy have been documented.
 
 S3 Bronze is the immutable replay/audit layer. A successful upload records its checksum, URI,
 version, and verification time in PostgreSQL; the existing ingestion run remains responsible for
-local PostgreSQL UPSERTs. The EPSS Silver application handler can independently consume a
-versioned S3 notification, but no S3 notification, queue, or Lambda resource is deployed yet.
-Before deleting local copies, define a retention policy and demonstrate restore from S3. Cloud
-deployments should monitor failed uploads and object verification, enable appropriate audit/access
-telemetry, and review the storage, request, and telemetry costs.
+local PostgreSQL UPSERTs. The EPSS Silver AWS path independently consumes versioned S3
+notifications through SQS and does not use PostgreSQL. Before deleting local copies, define a
+retention policy and demonstrate restore from S3. Cloud deployments should monitor failed uploads,
+object verification, SQS backlog/DLQ depth, and Lambda failures; enable appropriate audit/access
+telemetry; and review the storage, request, compute, and telemetry costs.
 
 ## EPSS Silver Parquet (first slice)
 
@@ -182,8 +182,8 @@ Both objects use conditional immutable writes; `_manifest.json` is written last 
 marker. A repeated notification verifies and reuses the committed partition. A failure after the
 Parquet upload but before the manifest is safely retryable, while different Raw bytes for an
 already committed score date fail as a conflict. SQS records return partial batch failures so a
-future event-source mapping can retry only failed messages. The checked-in fixture test exercises
-the handler contract without AWS credentials:
+failed message can be retried without replaying successful messages. The checked-in fixture test
+exercises the handler contract without AWS credentials:
 
 ```bash
 .venv/bin/python -m pytest -q tests/unit/test_epss_silver_lambda.py
@@ -191,10 +191,10 @@ the handler contract without AWS credentials:
 
 `THREATFLOW_S3_BRONZE_BUCKET` and `THREATFLOW_S3_SILVER_BUCKET` identify the allowed input and
 output buckets; the corresponding prefix settings default to `bronze` and `silver`. Terraform now
-defines the Silver bucket and a protected SQS Standard queue with a dedicated DLQ. The queues are
-connected to Lambda through an SQS event-source mapping, but S3 does not yet publish notifications,
-so new Bronze objects cannot start automatic transformations. Lambda
-container packaging is available under `lambda/epss_silver`: it uses the ARM64 AWS Python 3.12
+defines the Silver bucket and a protected SQS Standard queue with a dedicated DLQ. S3 publishes
+only new `ObjectCreated` events matching `bronze/source=epss/*.csv.gz`; existing objects are not
+replayed. The queue is connected to Lambda through an SQS event-source mapping. Lambda container
+packaging is available under `lambda/epss_silver`: it uses the ARM64 AWS Python 3.12
 base image and a hash-pinned PyArrow 26.0.1 wheel. Terraform creates an immutable, encrypted ECR
 repository with scan-on-push and defines an ARM64 image Lambda addressed by immutable ECR digest,
 a dedicated least-privilege execution role, and a 14-day CloudWatch log group. The role can read
@@ -202,8 +202,9 @@ only exact versions below `bronze/source=epss/*` and read/write only
 `silver/epss_scores/*`; it has no bucket listing, object deletion, KMS, or database access. A checked-in
 direct S3 event fixture supports manual invocation after deployment. The execution role can poll
 and delete messages only from the dedicated EPSS queue. The mapping uses single-message batches,
-partial failure reporting, and maximum concurrency two. The filtered S3 notification remains a
-deliberately disconnected deployment step. The PostgreSQL-based
+partial failure reporting, and maximum concurrency two. The handler acknowledges S3's one-time
+destination-validation `s3:TestEvent` only when it names the configured Bronze bucket. The
+PostgreSQL-based
 `epss_silver_request` resolver remains useful for local audit and manual lineage inspection, but
 it is not part of the automatic AWS event path.
 

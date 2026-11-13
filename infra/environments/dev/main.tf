@@ -92,3 +92,18 @@ module "epss_silver_lambda" {
     Owner = "capstone"
   }
 }
+
+module "epss_bronze_notification" {
+  source = "../../modules/epss_bronze_notification"
+
+  bronze_bucket_name = module.bronze_storage.bucket_name
+  bronze_prefix      = var.bronze_prefix
+  queue_arn          = module.epss_silver_queue.queue_arn
+
+  # S3 sends a destination-validation TestEvent when this resource is created.
+  # Ensure the updated handler and active SQS mapping can acknowledge it first.
+  depends_on = [
+    module.epss_silver_queue,
+    module.epss_silver_lambda,
+  ]
+}

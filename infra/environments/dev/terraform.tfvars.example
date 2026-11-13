@@ -10,8 +10,9 @@ noncurrent_version_retention_days        = 90
 silver_prefix                            = "silver"
 silver_noncurrent_version_retention_days = 30
 
-# S3 notification and Lambda consumption are wired in later slices. These queues can
-# be created first without starting any transformation.
+# S3 publishes matching EPSS Bronze object-created events to this Standard queue;
+# Lambda consumes them through an enabled event-source mapping. Existing objects are
+# not replayed when the notification is created.
 epss_silver_queue_name                          = "threatflow-epss-bronze-events-dev"
 epss_silver_dlq_name                            = "threatflow-epss-bronze-events-dev-dlq"
 epss_silver_queue_visibility_timeout_seconds    = 1800

@@ -379,6 +379,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 if not isinstance(message_id, str) or not message_id:
                     raise ValueError("SQS record has no messageId")
                 body = json.loads(record.get("body", ""))
+                if _is_expected_s3_test_event(body, processor.config):
+                    LOGGER.info(
+                        "Ignoring S3 destination validation event: bucket=%s",
+                        body["Bucket"],
+                    )
+                    continue
                 process_s3_notification(body, processor)
             except Exception:
                 LOGGER.exception("EPSS Silver SQS message failed: message_id=%s", message_id)
@@ -440,6 +446,17 @@ def _parse_s3_record(
         version_id=version_id,
         size_bytes=size_bytes,
         source_sha256=match.group(1),
+    )
+
+
+def _is_expected_s3_test_event(
+    event: dict[str, Any],
+    config: EpssSilverLambdaConfig,
+) -> bool:
+    return (
+        event.get("Service") == "Amazon S3"
+        and event.get("Event") == "s3:TestEvent"
+        and event.get("Bucket") == config.bronze_bucket
     )
 
 

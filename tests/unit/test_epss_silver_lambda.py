@@ -229,6 +229,67 @@ def test_sqs_wrapper_reports_only_failed_messages(monkeypatch) -> None:
     assert response == {"batchItemFailures": [{"itemIdentifier": "bad-message"}]}
 
 
+def test_sqs_wrapper_acknowledges_expected_s3_destination_test_event(monkeypatch) -> None:
+    client = MemoryS3(raw())
+    service = processor(client)
+    monkeypatch.setattr(
+        "threatflow.transformation.epss_silver_lambda._environment_processor",
+        lambda: service,
+    )
+    event = {
+        "Records": [
+            {
+                "eventSource": "aws:sqs",
+                "messageId": "s3-test-message",
+                "body": json.dumps(
+                    {
+                        "Service": "Amazon S3",
+                        "Event": "s3:TestEvent",
+                        "Bucket": BRONZE_BUCKET,
+                        "RequestId": "test-request",
+                        "HostId": "test-host",
+                    }
+                ),
+            }
+        ]
+    }
+
+    response = lambda_handler(event, None)
+
+    assert response == {"batchItemFailures": []}
+    assert client.get_calls == []
+    assert client.put_calls == []
+
+
+def test_sqs_wrapper_rejects_s3_test_event_for_another_bucket(monkeypatch) -> None:
+    service = processor(MemoryS3(raw()))
+    monkeypatch.setattr(
+        "threatflow.transformation.epss_silver_lambda._environment_processor",
+        lambda: service,
+    )
+    event = {
+        "Records": [
+            {
+                "eventSource": "aws:sqs",
+                "messageId": "wrong-bucket-test-message",
+                "body": json.dumps(
+                    {
+                        "Service": "Amazon S3",
+                        "Event": "s3:TestEvent",
+                        "Bucket": "unexpected-bronze-bucket",
+                    }
+                ),
+            }
+        ]
+    }
+
+    response = lambda_handler(event, None)
+
+    assert response == {
+        "batchItemFailures": [{"itemIdentifier": "wrong-bucket-test-message"}]
+    }
+
+
 def _checksum(content: bytes) -> str:
     return base64.b64encode(sha256(content).digest()).decode("ascii")
 

@@ -1,6 +1,6 @@
 # ADR 0002: Independent event-driven EPSS Silver processing
 
-- Status: Application, Lambda, and SQS consumption implemented; S3 notification pending
+- Status: Implemented; AWS deployment and end-to-end verification pending
 - Date: 2026-11-13
 
 ## Context
@@ -40,8 +40,9 @@ and a 14-day CloudWatch log group. The role reads only exact EPSS Bronze object 
 reads/writes only the EPSS Silver dataset prefix, and polls only the dedicated EPSS queue. The
 enabled SQS event-source mapping uses a one-message batch, partial failure reporting, and maximum
 concurrency two. A direct S3 event fixture supports both manual Lambda invocation and a controlled
-SQS message test. The S3 notification and CloudWatch alarms remain deliberately separate
-deployment slices.
+SQS message test. A filtered S3 notification publishes new EPSS Bronze `.csv.gz` object-created
+events directly to the queue. The handler safely acknowledges S3's destination-validation event
+for the configured bucket. CloudWatch alarms remain a separate deployment slice.
 
 ## Consequences
 
@@ -52,5 +53,5 @@ deployment slices.
   helper.
 - S3, SQS, Lambda, logs, and audit telemetry add request, compute, and retention costs that must be
   reviewed before deployment.
-- The S3 notification must be restricted to `bronze/source=epss/*.csv.gz`, and Silver output must
-  not match that prefix, preventing recursive invocation.
+- The S3 notification is restricted to `bronze/source=epss/*.csv.gz`, and Silver output does not
+  match that prefix, preventing recursive invocation.

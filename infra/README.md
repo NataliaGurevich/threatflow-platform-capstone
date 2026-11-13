@@ -2,10 +2,11 @@
 
 Terraform manages the small AWS extension to the local ThreatFlow capstone. Separate modules
 define protected Amazon S3 General Purpose buckets for immutable Bronze artifacts and derived
-Silver datasets. A third module defines the Standard queue and DLQ that will decouple S3 Bronze
-events from the future EPSS transformation Lambda. A fourth module creates the private ECR
-repository for its container image. A fifth module creates the image-based ARM64 Lambda, its
-dedicated execution role, and a bounded CloudWatch log group. The Bronze module also exposes a
+Silver datasets. A third module defines the Standard queue and DLQ that decouple S3 Bronze events
+from the EPSS transformation Lambda. A fourth module creates the private ECR repository for its
+container image. A fifth module creates the image-based ARM64 Lambda, its dedicated execution role,
+and a bounded CloudWatch log group. A sixth module configures the filtered Bronze-to-SQS event
+notification. The Bronze module also exposes a
 least-privilege ingestion policy that the development root can attach to the dedicated local
 Airflow identity.
 
@@ -22,6 +23,7 @@ infra/
 ├── modules/epss_silver_queue/    reusable SQS event queue and DLQ module
 ├── modules/epss_silver_image/    private ECR image repository module
 ├── modules/epss_silver_lambda/   Lambda, execution role, and log group module
+├── modules/epss_bronze_notification/ filtered S3-to-SQS notification module
 └── environments/dev/             development root module
 ```
 
@@ -61,9 +63,13 @@ from the configured Bronze bucket in the current AWS account.
 The SQS-to-Lambda event-source mapping is enabled with one message per invocation, partial batch
 failure reporting, no batching delay, and maximum concurrency of two. Lambda long-polls the queue
 and deletes a message only after the handler reports success; repeated deliveries remain safe
-because the Silver writer is idempotent. This slice deliberately creates no S3 bucket notification,
-so new Bronze objects do not yet enqueue messages automatically. The filtered S3 notification and
-a DLQ alarm belong to later slices.
+because the Silver writer is idempotent. The S3 notification publishes `ObjectCreated` events only
+for keys with prefix `bronze/source=epss/` and suffix `.csv.gz`; CISA, NVD, Silver objects, and
+unrelated files do not match. Existing Bronze objects are not replayed when the notification is
+created. S3's destination-validation `s3:TestEvent` is acknowledged only for the configured Bronze
+bucket. The notification resource manages the bucket's complete notification configuration, so
+future destinations must be added to the same Terraform resource instead of creating a competing
+`aws_s3_bucket_notification` resource.
 
 The EPSS image repository uses immutable tags, AES256 encryption, basic scan-on-push, and refuses
 forced deletion. Its lifecycle expires only images that have remained untagged for seven days;
@@ -100,6 +106,9 @@ terraform -chdir=infra/modules/epss_silver_image test
 
 terraform -chdir=infra/modules/epss_silver_lambda init -backend=false
 terraform -chdir=infra/modules/epss_silver_lambda test
+
+terraform -chdir=infra/modules/epss_bronze_notification init -backend=false
+terraform -chdir=infra/modules/epss_bronze_notification test
 ```
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
@@ -123,6 +132,12 @@ Apply only after reviewing the exact account, region, both bucket names, both qu
 repository name, IAM policies, and estimated cost impact. `prevent_destroy` intentionally blocks
 ordinary destruction of both stateful buckets. After apply, set `THREATFLOW_S3_SILVER_BUCKET` to
 the `silver_bucket_name` Terraform output; do not commit the resulting `.env`.
+
+The Lambda image must include the current handler before applying the notification. Build and push
+a new ARM64 image, record its immutable digest in `epss_silver_lambda_image_uri`, and review one
+combined plan. The root module orders the queue policy and updated Lambda/event-source mapping
+before the S3 notification, so the destination-validation event is consumed by the compatible
+handler.
 
 After Terraform creates ECR, build one ARM64 image and use a unique immutable tag such as a release
 plus Git commit. Replace placeholders with the Terraform output and chosen tag:
