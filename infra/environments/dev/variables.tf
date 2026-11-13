@@ -86,6 +86,64 @@ variable "epss_silver_image_untagged_retention_days" {
   default     = 7
 }
 
+variable "epss_silver_lambda_function_name" {
+  description = "Name of the EPSS Bronze-to-Silver Lambda function."
+  type        = string
+  default     = "threatflow-epss-silver-dev"
+}
+
+variable "epss_silver_lambda_execution_role_name" {
+  description = "Name of the dedicated EPSS Silver Lambda execution role."
+  type        = string
+  default     = "threatflow-epss-silver-dev-execution"
+}
+
+variable "epss_silver_lambda_image_uri" {
+  description = "Immutable ECR image URI for the EPSS Silver Lambda, addressed by digest."
+  type        = string
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.epss_silver_lambda_image_uri))
+    error_message = "epss_silver_lambda_image_uri must end in @sha256:<64 lowercase hex characters>."
+  }
+}
+
+variable "epss_silver_lambda_memory_size_mb" {
+  description = "Memory allocated to the PyArrow EPSS Silver Lambda."
+  type        = number
+  default     = 2048
+}
+
+variable "epss_silver_lambda_timeout_seconds" {
+  description = "Maximum EPSS Silver Lambda execution time."
+  type        = number
+  default     = 300
+}
+
+variable "epss_silver_lambda_reserved_concurrency" {
+  description = "Reserved concurrency for the development Lambda; -1 uses the shared account pool."
+  type        = number
+  default     = -1
+}
+
+variable "epss_silver_lambda_log_retention_days" {
+  description = "Retention period for EPSS Silver Lambda CloudWatch logs."
+  type        = number
+  default     = 14
+}
+
+variable "epss_silver_event_source_mapping_enabled" {
+  description = "Enable Lambda polling of the EPSS SQS event queue."
+  type        = bool
+  default     = true
+}
+
+variable "epss_silver_event_source_maximum_concurrency" {
+  description = "Maximum concurrent Lambda invocations started by the EPSS SQS mapping."
+  type        = number
+  default     = 2
+}
+
 variable "create_airflow_local_identity" {
   description = "Create the local-only IAM user used by Airflow through temporary aws login credentials."
   type        = bool

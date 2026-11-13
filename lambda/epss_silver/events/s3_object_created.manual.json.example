@@ -1,0 +1,20 @@
+{
+  "Records": [
+    {
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "awsRegion": "eu-central-1",
+      "s3": {
+        "bucket": {
+          "name": "threatflow-bronze-dev-capstone"
+        },
+        "object": {
+          "key": "bronze%2Fsource%3Depss%2Fsha256%3DREPLACE_WITH_64_CHARACTER_SHA256.csv.gz",
+          "size": 123456,
+          "versionId": "REPLACE_WITH_S3_VERSION_ID",
+          "sequencer": "manual-invocation"
+        }
+      }
+    }
+  ]
+}

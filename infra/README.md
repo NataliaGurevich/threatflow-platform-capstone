@@ -4,9 +4,10 @@ Terraform manages the small AWS extension to the local ThreatFlow capstone. Sepa
 define protected Amazon S3 General Purpose buckets for immutable Bronze artifacts and derived
 Silver datasets. A third module defines the Standard queue and DLQ that will decouple S3 Bronze
 events from the future EPSS transformation Lambda. A fourth module creates the private ECR
-repository for its container image. The Bronze module also exposes a least-privilege ingestion
-policy that the development root can attach to the dedicated local Airflow identity. Lambda
-access to Bronze and Silver is intentionally deferred to the function deployment slice.
+repository for its container image. A fifth module creates the image-based ARM64 Lambda, its
+dedicated execution role, and a bounded CloudWatch log group. The Bronze module also exposes a
+least-privilege ingestion policy that the development root can attach to the dedicated local
+Airflow identity.
 
 No Terraform command in this repository should receive long-lived credentials. Use a temporary
 AWS CLI/SSO session when a real plan is eventually required. Never commit `terraform.tfvars`,
@@ -20,6 +21,7 @@ infra/
 ├── modules/silver_storage/       reusable S3 Silver module
 ├── modules/epss_silver_queue/    reusable SQS event queue and DLQ module
 ├── modules/epss_silver_image/    private ECR image repository module
+├── modules/epss_silver_lambda/   Lambda, execution role, and log group module
 └── environments/dev/             development root module
 ```
 
@@ -34,10 +36,13 @@ Both storage modules configure:
 - cleanup of incomplete multipart uploads after seven days;
 - no public access.
 
-Bronze retains noncurrent versions for 90 days by default and exposes object read/write access
-only under `bronze/*`, without object deletion. Silver retains noncurrent versions for 30 days by
-default and publishes committed datasets under `silver/*`; no runtime principal receives Silver
-access in this slice.
+Bronze retains noncurrent versions for 90 days by default and exposes ingestion object read/write
+access only under `bronze/*`, without object deletion. The Lambda role is narrower: it can only
+read exact object versions under `bronze/source=epss/*`. Silver retains noncurrent versions for 30
+days by default and publishes committed datasets under `silver/*`; the Lambda can only read and
+write `silver/epss_scores/*`. It receives no bucket listing, object deletion, KMS, or PostgreSQL access.
+It additionally receives `ReceiveMessage`, `DeleteMessage`, and `GetQueueAttributes` only for the
+dedicated EPSS event queue; no queue wildcard is used.
 
 Current Bronze objects do not expire. This preserves the governance requirement that exact Raw
 artifacts remain available for audit and replay. The noncurrent-version rule limits accidental
@@ -53,16 +58,26 @@ the message to a dedicated DLQ retained for 14 days. The DLQ accepts redrive onl
 queue. Both queue policies deny non-TLS access; the source policy permits only `sqs:SendMessage`
 from the configured Bronze bucket in the current AWS account.
 
-This slice deliberately creates no S3 notification and no Lambda event-source mapping. Creating
-the queues alone cannot trigger transformations. Notification filtering, Lambda IAM, event-source
-mapping, partial-batch response configuration, and a DLQ alarm belong to the next slices.
+The SQS-to-Lambda event-source mapping is enabled with one message per invocation, partial batch
+failure reporting, no batching delay, and maximum concurrency of two. Lambda long-polls the queue
+and deletes a message only after the handler reports success; repeated deliveries remain safe
+because the Silver writer is idempotent. This slice deliberately creates no S3 bucket notification,
+so new Bronze objects do not yet enqueue messages automatically. The filtered S3 notification and
+a DLQ alarm belong to later slices.
 
 The EPSS image repository uses immutable tags, AES256 encryption, basic scan-on-push, and refuses
 forced deletion. Its lifecycle expires only images that have remained untagged for seven days;
-tagged releases are not automatically deleted because a Lambda function may still reference their
-digest. The repository module does not build or push an image and does not create a Lambda
-function. This avoids Terraform `local-exec` and makes the image digest an explicit deployment
-input in the next slice.
+tagged releases are not automatically deleted because the Lambda references an immutable digest.
+The repository module does not build or push an image. Terraform deliberately accepts the exact
+`IMAGE_URI` as an input and rejects tag-only references such as `:latest`.
+
+The function uses the ARM64 architecture, 2048 MiB memory, a five-minute timeout, and the shared
+unreserved account concurrency pool. This is compatible with development accounts whose regional
+concurrency quota is too small to allocate function-level reservations. The SQS event-source
+mapping caps this data flow at two concurrent invocations without reserving account capacity. The
+30-minute queue visibility timeout is validated as at least six times the function timeout.
+CloudWatch logs use JSON format and expire after 14 days by default; Terraform creates the group
+before the function, so its role does not need `logs:CreateLogGroup`.
 
 ## Static verification without AWS access
 
@@ -82,6 +97,9 @@ terraform -chdir=infra/modules/epss_silver_queue test
 
 terraform -chdir=infra/modules/epss_silver_image init -backend=false
 terraform -chdir=infra/modules/epss_silver_image test
+
+terraform -chdir=infra/modules/epss_silver_lambda init -backend=false
+terraform -chdir=infra/modules/epss_silver_lambda test
 ```
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
@@ -130,11 +148,82 @@ aws ecr describe-images \
   --repository-name threatflow/epss-silver \
   --image-ids imageTag=<image-tag> \
   --region eu-central-1 \
-  --query 'imageDetails[0].{digest:imageDigest,status:imageScanStatus.status}'
+  --query 'imageDetails[0].imageDigest' \
+  --output text
+
+aws ecr describe-image-scan-findings \
+  --repository-name threatflow/epss-silver \
+  --image-id imageDigest=<image-digest> \
+  --region eu-central-1 \
+  --query '{status:imageScanStatus.status,findings:imageScanFindings.findingSeverityCounts}'
 ```
 
-Record the returned digest, not the mutable local tag, for the future `aws_lambda_function`
-`image_uri`. Do not commit ECR login material or Docker credentials.
+Set `epss_silver_lambda_image_uri` in the ignored `terraform.tfvars` to
+`<repository-url>@<image-digest>`, not to a tag. Do not commit ECR login material or Docker
+credentials.
+
+## Manual Lambda invocation
+
+After applying the reviewed function plan, copy the checked-in fixture and replace its Bronze
+bucket, URL-encoded key, exact `versionId`, and byte `size` with values from one accepted EPSS
+object. `list-object-versions` supplies all four source values without downloading the feed:
+
+```sh
+aws s3api list-object-versions \
+  --bucket threatflow-bronze-dev-capstone \
+  --prefix bronze/source=epss/ \
+  --region eu-central-1 \
+  --query 'Versions[?IsLatest] | [0].{Key:Key,VersionId:VersionId,Size:Size}'
+
+cp lambda/epss_silver/events/s3_object_created.manual.json.example \
+  /tmp/threatflow-epss-silver-event.json
+```
+
+Invoke only after the copied JSON contains the matching values. AWS CLI v2 requires
+`--cli-binary-format raw-in-base64-out` for the JSON payload:
+
+```sh
+aws lambda invoke \
+  --function-name threatflow-epss-silver-dev \
+  --region eu-central-1 \
+  --cli-binary-format raw-in-base64-out \
+  --payload fileb:///tmp/threatflow-epss-silver-event.json \
+  /tmp/threatflow-epss-silver-response.json
+
+python -m json.tool /tmp/threatflow-epss-silver-response.json
+```
+
+A successful first invocation reports one created partition; replaying the same fixture reports
+the same partition with `created: false`. Verify that the Parquet file and `_manifest.json` exist
+under the reported `silver/epss_scores/score_date=.../` prefix. No notification or queue is needed
+for this manual test.
+
+## Manual SQS-to-Lambda test
+
+After applying the event-source mapping, send the same direct S3 event JSON as one queue message.
+The caller needs `sqs:SendMessage`; the Lambda role itself intentionally does not have that action:
+
+```sh
+aws sqs send-message \
+  --queue-url https://sqs.eu-central-1.amazonaws.com/020502037761/threatflow-epss-bronze-events-dev \
+  --message-body file:///tmp/threatflow-epss-silver-event.json \
+  --region eu-central-1
+```
+
+Lambda wraps that body in the normal SQS invocation event, processes the exact Bronze object
+version, and deletes the message after success. Verify the queue returns to zero visible and
+in-flight messages and inspect the structured function logs:
+
+```sh
+aws sqs get-queue-attributes \
+  --queue-url https://sqs.eu-central-1.amazonaws.com/020502037761/threatflow-epss-bronze-events-dev \
+  --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
+  --region eu-central-1
+
+aws logs tail /aws/lambda/threatflow-epss-silver-dev \
+  --since 10m \
+  --region eu-central-1
+```
 
 ## Cost and observability
 
@@ -151,8 +240,10 @@ pricing before apply.
 
 ECR charges for stored image bytes and applicable data transfer. Basic scanning has no separate
 scan charge; enhanced continuous scanning would add Amazon Inspector cost and is intentionally not
-enabled account-wide for this development capstone. The repository alone creates no Lambda
-invocation cost.
+enabled account-wide for this development capstone. Lambda charges accrue only for requests and
+execution duration. The SQS event-source mapping limits parallelism without reserving the
+account's small shared concurrency quota. CloudWatch Logs charges depend on ingestion and
+retained bytes, with retention bounded to 14 days by default.
 
 The storage slices do not create a log bucket or trail. Before treating the environment as more
 than a capstone development deployment, add scoped CloudTrail S3 data events, encrypted log
@@ -166,5 +257,6 @@ References:
 - [Amazon SQS pricing](https://aws.amazon.com/sqs/pricing/)
 - [Amazon SQS dead-letter queues](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html)
 - [AWS Lambda Python container images](https://docs.aws.amazon.com/lambda/latest/dg/python-image.html)
+- [AWS Lambda execution roles](https://docs.aws.amazon.com/lambda/latest/dg/lambda-intro-execution-role.html)
 - [Amazon ECR tag immutability](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html)
 - [Terraform provider mocking](https://developer.hashicorp.com/terraform/language/tests/mocking)

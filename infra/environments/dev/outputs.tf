@@ -63,6 +63,31 @@ output "epss_silver_image_repository_url" {
   value       = module.epss_silver_image.repository_url
 }
 
+output "epss_silver_lambda_function_name" {
+  description = "Name of the EPSS Bronze-to-Silver Lambda function."
+  value       = module.epss_silver_lambda.function_name
+}
+
+output "epss_silver_lambda_function_arn" {
+  description = "ARN of the EPSS Bronze-to-Silver Lambda function."
+  value       = module.epss_silver_lambda.function_arn
+}
+
+output "epss_silver_lambda_execution_role_arn" {
+  description = "ARN of the dedicated EPSS Silver Lambda execution role."
+  value       = module.epss_silver_lambda.execution_role_arn
+}
+
+output "epss_silver_lambda_log_group_name" {
+  description = "CloudWatch log group for EPSS Silver Lambda invocations."
+  value       = module.epss_silver_lambda.log_group_name
+}
+
+output "epss_silver_event_source_mapping_uuid" {
+  description = "UUID of the EPSS SQS-to-Lambda event source mapping."
+  value       = module.epss_silver_lambda.event_source_mapping_uuid
+}
+
 output "airflow_local_user_arn" {
   description = "Local Airflow IAM user ARN, or null when the identity is disabled."
   value       = try(aws_iam_user.airflow_local[0].arn, null)

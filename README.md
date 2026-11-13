@@ -192,12 +192,18 @@ the handler contract without AWS credentials:
 `THREATFLOW_S3_BRONZE_BUCKET` and `THREATFLOW_S3_SILVER_BUCKET` identify the allowed input and
 output buckets; the corresponding prefix settings default to `bronze` and `silver`. Terraform now
 defines the Silver bucket and a protected SQS Standard queue with a dedicated DLQ. The queues are
-not yet connected to S3 or Lambda, so applying this slice cannot start transformations. Lambda
+connected to Lambda through an SQS event-source mapping, but S3 does not yet publish notifications,
+so new Bronze objects cannot start automatic transformations. Lambda
 container packaging is available under `lambda/epss_silver`: it uses the ARM64 AWS Python 3.12
 base image and a hash-pinned PyArrow 26.0.1 wheel. Terraform creates an immutable, encrypted ECR
-repository with scan-on-push, but does not create the Lambda function until an image has been
-pushed and addressed by digest. Lambda IAM/function configuration, the SQS event-source mapping,
-and the filtered S3 notification remain deployment steps. The PostgreSQL-based
+repository with scan-on-push and defines an ARM64 image Lambda addressed by immutable ECR digest,
+a dedicated least-privilege execution role, and a 14-day CloudWatch log group. The role can read
+only exact versions below `bronze/source=epss/*` and read/write only
+`silver/epss_scores/*`; it has no bucket listing, object deletion, KMS, or database access. A checked-in
+direct S3 event fixture supports manual invocation after deployment. The execution role can poll
+and delete messages only from the dedicated EPSS queue. The mapping uses single-message batches,
+partial failure reporting, and maximum concurrency two. The filtered S3 notification remains a
+deliberately disconnected deployment step. The PostgreSQL-based
 `epss_silver_request` resolver remains useful for local audit and manual lineage inspection, but
 it is not part of the automatic AWS event path.
 

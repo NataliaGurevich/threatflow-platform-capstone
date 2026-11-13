@@ -22,6 +22,18 @@ epss_silver_queue_max_receive_count             = 5
 epss_silver_image_repository_name         = "threatflow/epss-silver"
 epss_silver_image_untagged_retention_days = 7
 
+# Use the immutable digest returned by ECR after building, pushing, and scanning
+# the ARM64 image. A tag such as :latest is intentionally rejected.
+epss_silver_lambda_image_uri            = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/threatflow/epss-silver@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+epss_silver_lambda_function_name        = "threatflow-epss-silver-dev"
+epss_silver_lambda_execution_role_name  = "threatflow-epss-silver-dev-execution"
+epss_silver_lambda_memory_size_mb       = 2048
+epss_silver_lambda_timeout_seconds      = 300
+epss_silver_lambda_reserved_concurrency = -1
+epss_silver_lambda_log_retention_days   = 14
+epss_silver_event_source_mapping_enabled     = true
+epss_silver_event_source_maximum_concurrency = 2
+
 # Local Docker Compose only. This creates an IAM user with no access keys and attaches
 # the Bronze object policy plus AWS SignInLocalDevelopmentAccess.
 create_airflow_local_identity = false

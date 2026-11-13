@@ -1,7 +1,7 @@
 # ADR 0002: Independent event-driven EPSS Silver processing
 
-- Status: Application, AWS storage, and queues deployed; image Terraform prepared, event wiring pending
-- Date: 2026-11-12
+- Status: Application, Lambda, and SQS consumption implemented; S3 notification pending
+- Date: 2026-11-13
 
 ## Context
 
@@ -35,8 +35,13 @@ and a future DLQ-based recovery demonstration.
 The application handler and fixture tests are implemented. Terraform now defines the Silver
 bucket, a Standard source queue, and a dedicated DLQ with bounded redrive. Lambda packaging and
 the private ECR repository are implemented with an ARM64 Python 3.12/PyArrow container image.
-Lambda IAM/function configuration, AWS invocation, the S3 notification, SQS event-source mapping,
-and CloudWatch alarms remain deliberately separate deployment slices.
+Terraform also defines the ARM64 image function by immutable digest, a dedicated execution role,
+and a 14-day CloudWatch log group. The role reads only exact EPSS Bronze object versions,
+reads/writes only the EPSS Silver dataset prefix, and polls only the dedicated EPSS queue. The
+enabled SQS event-source mapping uses a one-message batch, partial failure reporting, and maximum
+concurrency two. A direct S3 event fixture supports both manual Lambda invocation and a controlled
+SQS message test. The S3 notification and CloudWatch alarms remain deliberately separate
+deployment slices.
 
 ## Consequences
 
