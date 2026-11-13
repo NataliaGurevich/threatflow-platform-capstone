@@ -25,10 +25,10 @@ run "creates_protected_standard_queue_and_dlq" {
 
   assert {
     condition = (
-      aws_sqs_queue.events.sqs_managed_sse_enabled &&
+      !aws_sqs_queue.events.sqs_managed_sse_enabled &&
       aws_sqs_queue.dlq.sqs_managed_sse_enabled
     )
-    error_message = "Both queues must use SQS-managed server-side encryption."
+    error_message = "The S3 destination queue must not use SSE-SQS; the DLQ must remain encrypted."
   }
 
   assert {
@@ -67,7 +67,8 @@ run "creates_protected_standard_queue_and_dlq" {
     condition = (
       strcontains(aws_sqs_queue_policy.events.policy, "s3.amazonaws.com") &&
       strcontains(aws_sqs_queue_policy.events.policy, "sqs:SendMessage") &&
-      strcontains(aws_sqs_queue_policy.events.policy, var.bronze_bucket_arn) &&
+      strcontains(aws_sqs_queue_policy.events.policy, "\"ArnLike\"") &&
+      strcontains(aws_sqs_queue_policy.events.policy, replace(var.bronze_bucket_arn, ":s3:::", ":s3:*:*:")) &&
       strcontains(aws_sqs_queue_policy.events.policy, var.source_account_id) &&
       strcontains(aws_sqs_queue_policy.events.policy, "aws:SecureTransport")
     )

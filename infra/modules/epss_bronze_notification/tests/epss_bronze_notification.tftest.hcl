@@ -15,7 +15,7 @@ run "creates_filtered_epss_object_notification" {
       one(aws_s3_bucket_notification.this.queue).id == "epss-bronze-object-created" &&
       one(aws_s3_bucket_notification.this.queue).queue_arn == var.queue_arn &&
       one(aws_s3_bucket_notification.this.queue).events == toset(["s3:ObjectCreated:*"]) &&
-      one(aws_s3_bucket_notification.this.queue).filter_prefix == "bronze/source=epss/" &&
+      one(aws_s3_bucket_notification.this.queue).filter_prefix == "bronze/source%3Depss/" &&
       one(aws_s3_bucket_notification.this.queue).filter_suffix == ".csv.gz"
     )
     error_message = "S3 must notify only for EPSS Bronze gzip object-created events."
@@ -42,8 +42,8 @@ run "preserves_epss_and_adds_filtered_cisa_notification" {
   assert {
     condition = (
       length(aws_s3_bucket_notification.this.queue) == 2 &&
-      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "epss-bronze-object-created"]).filter_prefix == "bronze/source=epss/" &&
-      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "cisa-bronze-object-created"]).filter_prefix == "bronze/source=cisa_kev/" &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "epss-bronze-object-created"]).filter_prefix == "bronze/source%3Depss/" &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "cisa-bronze-object-created"]).filter_prefix == "bronze/source%3Dcisa_kev/" &&
       one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "cisa-bronze-object-created"]).filter_suffix == ".json"
     )
     error_message = "The shared bucket notification must preserve EPSS and add filtered CISA events."
