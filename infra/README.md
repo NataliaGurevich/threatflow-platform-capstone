@@ -42,9 +42,11 @@ Bronze retains noncurrent versions for 90 days by default and exposes ingestion 
 access only under `bronze/*`, without object deletion. The Lambda role is narrower: it can only
 read exact object versions under `bronze/source=epss/*`. Silver retains noncurrent versions for 30
 days by default and publishes committed datasets under `silver/*`; the Lambda can only read and
-write `silver/epss_scores/*`. It receives no bucket listing, object deletion, KMS, or PostgreSQL access.
-It additionally receives `ReceiveMessage`, `DeleteMessage`, and `GetQueueAttributes` only for the
-dedicated EPSS event queue; no queue wildcard is used.
+write `silver/epss_scores/*`. A bucket-level `ListBucket` grant is conditionally restricted to that
+same dataset prefix; it lets a missing commit manifest return `NoSuchKey` without exposing other
+prefixes. Lambda receives no unrestricted bucket listing, object deletion, KMS, or PostgreSQL
+access. It additionally receives `ReceiveMessage`, `DeleteMessage`, and `GetQueueAttributes` only
+for the dedicated EPSS event queue; no queue wildcard is used.
 
 Current Bronze objects do not expire. This preserves the governance requirement that exact Raw
 artifacts remain available for audit and replay. The noncurrent-version rule limits accidental

@@ -1,6 +1,7 @@
 import base64
 import gzip
 import json
+import logging
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -202,7 +203,7 @@ def test_event_requires_version_id() -> None:
         process_s3_notification(event, processor(MemoryS3(raw())))
 
 
-def test_sqs_wrapper_reports_only_failed_messages(monkeypatch) -> None:
+def test_sqs_wrapper_reports_only_failed_messages(monkeypatch, caplog) -> None:
     monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
     service = processor(MemoryS3(raw()))
     monkeypatch.setattr(
@@ -224,9 +225,13 @@ def test_sqs_wrapper_reports_only_failed_messages(monkeypatch) -> None:
         ]
     }
 
-    response = lambda_handler(event, None)
+    with caplog.at_level(logging.INFO):
+        response = lambda_handler(event, None)
 
     assert response == {"batchItemFailures": [{"itemIdentifier": "bad-message"}]}
+    assert "EPSS Silver partition processed" in caplog.text
+    assert "score_date=2026-11-11" in caplog.text
+    assert "created=True" in caplog.text
 
 
 def test_sqs_wrapper_acknowledges_expected_s3_destination_test_event(monkeypatch) -> None:

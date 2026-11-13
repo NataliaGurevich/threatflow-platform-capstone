@@ -407,7 +407,17 @@ def process_s3_notification(
         raise ValueError("S3 notification must contain at least one record")
     results = []
     for record in records:
-        results.append(processor.process(_parse_s3_record(record, processor.config)))
+        result = processor.process(_parse_s3_record(record, processor.config))
+        LOGGER.info(
+            "EPSS Silver partition processed: score_date=%s created=%s "
+            "record_count=%s source_sha256=%s parquet_path=%s",
+            result.score_date.isoformat(),
+            result.created,
+            result.record_count,
+            result.source_sha256,
+            result.parquet_path,
+        )
+        results.append(result)
     return results
 
 

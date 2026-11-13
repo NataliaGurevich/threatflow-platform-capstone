@@ -199,8 +199,10 @@ base image and a hash-pinned PyArrow 26.0.1 wheel. Terraform creates an immutabl
 repository with scan-on-push and defines an ARM64 image Lambda addressed by immutable ECR digest,
 a dedicated least-privilege execution role, and a 14-day CloudWatch log group. The role can read
 only exact versions below `bronze/source=epss/*` and read/write only
-`silver/epss_scores/*`; it has no bucket listing, object deletion, KMS, or database access. A checked-in
-direct S3 event fixture supports manual invocation after deployment. The execution role can poll
+`silver/epss_scores/*`. Its bucket-level `s3:ListBucket` permission is conditionally restricted to
+that same Silver prefix so S3 can return `NoSuchKey` for a not-yet-created commit manifest; it has
+no unrestricted bucket listing, object deletion, KMS, or database access. A checked-in direct S3
+event fixture supports manual invocation after deployment. The execution role can poll
 and delete messages only from the dedicated EPSS queue. The mapping uses single-message batches,
 partial failure reporting, and maximum concurrency two. The handler acknowledges S3's one-time
 destination-validation `s3:TestEvent` only when it names the configured Bronze bucket. The

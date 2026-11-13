@@ -81,18 +81,20 @@ run "creates_least_privilege_arm64_image_lambda" {
       jsondecode(aws_iam_role_policy.runtime.policy).Statement[0].Action == ["s3:GetObjectVersion"] &&
       jsondecode(aws_iam_role_policy.runtime.policy).Statement[0].Resource == ["${var.bronze_bucket_arn}/bronze/source=epss/*"] &&
       jsondecode(aws_iam_role_policy.runtime.policy).Statement[1].Action == ["s3:GetObject", "s3:PutObject"] &&
-      jsondecode(aws_iam_role_policy.runtime.policy).Statement[1].Resource == ["${var.silver_bucket_arn}/silver/epss_scores/*"]
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[1].Resource == ["${var.silver_bucket_arn}/silver/epss_scores/*"] &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[2].Action == ["s3:ListBucket"] &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[2].Resource == [var.silver_bucket_arn] &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[2].Condition.StringLike["s3:prefix"] == ["silver/epss_scores/*"]
     )
-    error_message = "S3 permissions must be limited to versioned EPSS Bronze reads and EPSS Silver reads/writes."
+    error_message = "S3 permissions must be limited to EPSS Bronze versions and the EPSS Silver dataset prefix."
   }
 
   assert {
     condition = (
-      jsondecode(aws_iam_role_policy.runtime.policy).Statement[2].Action == ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"] &&
-      jsondecode(aws_iam_role_policy.runtime.policy).Statement[2].Resource == [var.sqs_queue_arn] &&
-      jsondecode(aws_iam_role_policy.runtime.policy).Statement[3].Action == ["logs:CreateLogStream", "logs:PutLogEvents"] &&
-      jsondecode(aws_iam_role_policy.runtime.policy).Statement[3].Resource == ["${aws_cloudwatch_log_group.this.arn}:*"] &&
-      !strcontains(aws_iam_role_policy.runtime.policy, "s3:ListBucket") &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[3].Action == ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"] &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[3].Resource == [var.sqs_queue_arn] &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[4].Action == ["logs:CreateLogStream", "logs:PutLogEvents"] &&
+      jsondecode(aws_iam_role_policy.runtime.policy).Statement[4].Resource == ["${aws_cloudwatch_log_group.this.arn}:*"] &&
       !strcontains(aws_iam_role_policy.runtime.policy, "s3:DeleteObject") &&
       !strcontains(aws_iam_role_policy.runtime.policy, "logs:CreateLogGroup") &&
       !strcontains(aws_iam_role_policy.runtime.policy, "kms:")

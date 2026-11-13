@@ -32,6 +32,17 @@ locals {
         Resource = [local.silver_object_arn]
       },
       {
+        Sid      = "ResolveMissingEpssSilverManifests"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [var.silver_bucket_arn]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["${var.silver_prefix}/epss_scores/*"]
+          }
+        }
+      },
+      {
         Sid      = "ConsumeEpssEventQueue"
         Effect   = "Allow"
         Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
