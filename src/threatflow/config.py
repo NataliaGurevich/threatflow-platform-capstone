@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     s3_replication_enabled: bool = False
     s3_bronze_bucket: str | None = None
     s3_bronze_prefix: str = "bronze"
+    s3_silver_bucket: str | None = None
+    s3_silver_prefix: str = "silver"
     aws_region: str | None = None
     nvd_api_key: SecretStr | None = None
     github_token: SecretStr | None = None
@@ -45,6 +47,8 @@ class Settings(BaseSettings):
             raise ValueError("S3 replication requires raw_storage_backend='local'")
         if not self.s3_bronze_prefix.strip("/"):
             raise ValueError("s3_bronze_prefix must contain at least one non-slash character")
+        if not self.s3_silver_prefix.strip("/"):
+            raise ValueError("s3_silver_prefix must contain at least one non-slash character")
         return self
 
     @property

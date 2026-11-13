@@ -246,6 +246,24 @@ and reuses prior snapshots. S3 locations and object version IDs are retained as 
 exist, but this command writes only local Silver files; controlled S3 Silver publication and the
 incremental CISA Lambda path are separate later slices.
 
+Publish only fully committed local CISA Silver partitions to the configured S3 Silver bucket:
+
+```bash
+uv run threatflow-publish-cisa-silver --dry-run
+uv run threatflow-publish-cisa-silver --apply --limit 10
+uv run threatflow-publish-cisa-silver --apply
+```
+
+Set `THREATFLOW_S3_SILVER_BUCKET`, `THREATFLOW_S3_SILVER_PREFIX`, and
+`THREATFLOW_AWS_REGION` first. Dry-run performs complete local verification and reports
+deterministic target URIs without creating an AWS client or contacting S3. Apply writes Parquet
+first and the manifest last using conditional immutable writes, then verifies S3 size, checksum,
+content type, encryption, and lineage metadata. Existing identical objects are reused; conflicting
+objects fail. A failure after the Parquet upload is safely retryable because the manifest remains
+the commit marker. The caller needs narrowly scoped S3 read/write access under
+`silver/cisa_kev_snapshots/*`; the current local Airflow IAM identity is Bronze-only and is not
+automatically broadened by this application command.
+
 Build and smoke-test the Lambda image locally without AWS credentials:
 
 ```bash
