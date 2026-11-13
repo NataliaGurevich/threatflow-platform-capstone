@@ -24,6 +24,7 @@ threatflow-reconcile-raw-storage = "threatflow.raw_storage_reconciliation:main"
 threatflow-restore-raw-artifact = "threatflow.raw_storage_restore:main"
 threatflow-build-epss-silver = "threatflow.transformation.epss_silver:main"
 threatflow-bootstrap-epss-silver = "threatflow.transformation.epss_silver_bootstrap:main"
+threatflow-bootstrap-cisa-silver = "threatflow.transformation.cisa_silver_bootstrap:main"
 
 [dependency-groups]
 dev = [

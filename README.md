@@ -210,6 +210,42 @@ PostgreSQL-based
 `epss_silver_request` resolver remains useful for local audit and manual lineage inspection, but
 it is not part of the automatic AWS event path.
 
+## CISA Silver snapshots (local bootstrap slice)
+
+CISA Silver preserves each accepted catalog as an immutable typed snapshot. Current catalog
+snapshots use the exact Raw SHA-256 as their identity; official Git-history snapshots use the
+40-character commit SHA. `catalogVersion` remains queryable metadata rather than a partition key:
+
+```text
+data/silver/cisa_kev_snapshots/
+├── snapshot_kind=snapshot/snapshot_id=<raw-sha256>/
+│   ├── cisa_kev.parquet
+│   └── _manifest.json
+└── snapshot_kind=git_history/snapshot_id=<git-commit-sha>/
+    ├── cisa_kev.parquet
+    └── _manifest.json
+```
+
+The transformer reuses the strict CISA parser and writes typed ZSTD Parquet with catalog metadata,
+snapshot lineage, CVE dates, and optional CWE lists. A manifest is published last as the commit
+marker. Replaying the same snapshot verifies and reuses it; a conflicting identity fails instead
+of overwriting data. Diagnostic `git_history_invalid` artifacts are never candidates.
+
+Plan and run the local bootstrap from the PostgreSQL Raw manifest:
+
+```bash
+uv run threatflow-bootstrap-cisa-silver --dry-run
+uv run threatflow-bootstrap-cisa-silver --apply --limit 10
+uv run threatflow-bootstrap-cisa-silver --apply
+```
+
+Dry-run verifies local size, SHA-256, catalog structure, declared count, parsed record count, and
+any existing committed partition without writing files. Apply processes snapshots sequentially
+and stops on the first failure. Completed manifests are resumable checkpoints, so a retry verifies
+and reuses prior snapshots. S3 locations and object version IDs are retained as lineage when they
+exist, but this command writes only local Silver files; controlled S3 Silver publication and the
+incremental CISA Lambda path are separate later slices.
+
 Build and smoke-test the Lambda image locally without AWS credentials:
 
 ```bash

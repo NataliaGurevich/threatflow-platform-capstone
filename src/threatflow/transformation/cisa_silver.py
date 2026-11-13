@@ -53,6 +53,7 @@ def transform_cisa_bytes(
     output_root: str | Path,
     source_revision: str | None = None,
     source_version_id: str | None = None,
+    snapshot_observed_at: datetime | None = None,
     expected_record_count: int | None = None,
 ) -> CisaSilverResult:
     """Validate exact CISA bytes and atomically commit one local Silver snapshot."""
@@ -65,6 +66,9 @@ def transform_cisa_bytes(
         expected_record_count=expected_record_count,
     )
     catalog = parse_catalog_document(content)
+    observed_at = snapshot_observed_at or acquired_at
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise ValueError("snapshot_observed_at must be timezone-aware")
     record_count = len(catalog.records)
     if expected_record_count is not None and record_count != expected_record_count:
         raise ValueError(
@@ -99,7 +103,7 @@ def transform_cisa_bytes(
     )
     partition.mkdir(parents=True, exist_ok=True)
     if not parquet_path.exists():
-        _write_parquet(parquet_path, _records_to_table(catalog, schema, acquired_at, source_sha256))
+        _write_parquet(parquet_path, _records_to_table(catalog, schema, observed_at, source_sha256))
     parquet_sha256, parquet_size = _verify_parquet(
         parquet_path, schema=schema, record_count=record_count
     )
@@ -110,6 +114,7 @@ def transform_cisa_bytes(
         source_sha256=source_sha256,
         source_uri=source_uri,
         acquired_at=acquired_at,
+        snapshot_observed_at=observed_at,
         source_revision=source_revision,
         source_version_id=source_version_id,
         parquet_sha256=parquet_sha256,
@@ -163,6 +168,34 @@ def cisa_silver_schema(
             pa.field("source_sha256", pa.string(), nullable=False),
         ],
         metadata=metadata,
+    )
+
+
+def verify_committed_cisa_partition(
+    *,
+    output_root: str | Path,
+    snapshot_kind: SnapshotKind,
+    snapshot_id: str,
+    source_sha256: str,
+    expected_record_count: int,
+) -> CisaSilverResult | None:
+    """Verify a committed local CISA partition, or return None when absent."""
+    partition = (
+        Path(output_root)
+        / DATASET_NAME
+        / f"snapshot_kind={snapshot_kind}"
+        / f"snapshot_id={snapshot_id}"
+    )
+    manifest_path = partition / MANIFEST_FILE_NAME
+    if not manifest_path.exists():
+        return None
+    return _reuse(
+        partition / PARQUET_FILE_NAME,
+        manifest_path,
+        snapshot_kind=snapshot_kind,
+        snapshot_id=snapshot_id,
+        source_sha256=source_sha256,
+        record_count=expected_record_count,
     )
 
 
@@ -261,6 +294,7 @@ def _manifest_payload(
     source_sha256: str,
     source_uri: str,
     acquired_at: datetime,
+    snapshot_observed_at: datetime,
     source_revision: str | None,
     source_version_id: str | None,
     parquet_sha256: str,
@@ -288,6 +322,7 @@ def _manifest_payload(
                 if catalog.date_released is not None
                 else None
             ),
+            "observed_at": snapshot_observed_at.astimezone(UTC).isoformat(),
         },
         "record_count": len(catalog.records),
         "source": source,
@@ -363,7 +398,16 @@ def _reuse(
     size = parquet.get("size_bytes")
     if not _SHA256.fullmatch(digest or "") or not isinstance(size, int):
         raise ValueError("invalid CISA Silver manifest Parquet metadata")
-    if calculate_sha256(parquet_path.read_bytes()) != digest or parquet_path.stat().st_size != size:
+    schema = cisa_silver_schema(
+        snapshot_kind=snapshot_kind,
+        snapshot_id=snapshot_id,
+        source_sha256=source_sha256,
+        record_count=record_count,
+    )
+    actual_digest, actual_size = _verify_parquet(
+        parquet_path, schema=schema, record_count=record_count
+    )
+    if actual_digest != digest or actual_size != size:
         raise ValueError("CISA Silver Parquet does not match its manifest")
     return CisaSilverResult(
         DATASET_NAME,
