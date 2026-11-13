@@ -9,13 +9,12 @@ import logging
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from threatflow.config import Settings
 from threatflow.raw_storage import calculate_sha256
 from threatflow.transformation.cisa_silver import (
     DATASET_NAME,
@@ -28,6 +27,9 @@ from threatflow.transformation.cisa_silver import (
 LOGGER = logging.getLogger(__name__)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+if TYPE_CHECKING:
+    from threatflow.config import Settings
 
 
 @dataclass(frozen=True)
@@ -370,6 +372,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    from threatflow.config import Settings
+
     args = build_parser().parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:

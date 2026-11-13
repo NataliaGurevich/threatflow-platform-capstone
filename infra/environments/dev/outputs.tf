@@ -93,6 +93,22 @@ output "epss_silver_event_source_mapping_uuid" {
   value       = module.epss_silver_lambda.event_source_mapping_uuid
 }
 
+output "cisa_silver_queue_url" {
+  value = module.cisa_silver_runtime.queue_url
+}
+
+output "cisa_silver_dlq_url" {
+  value = module.cisa_silver_runtime.dlq_url
+}
+
+output "cisa_silver_image_repository_url" {
+  value = module.cisa_silver_runtime.repository_url
+}
+
+output "cisa_silver_lambda_function_name" {
+  value = module.cisa_silver_runtime.function_name
+}
+
 output "airflow_local_user_arn" {
   description = "Local Airflow IAM user ARN, or null when the identity is disabled."
   value       = try(aws_iam_user.airflow_local[0].arn, null)

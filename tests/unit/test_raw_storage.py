@@ -128,6 +128,41 @@ def test_validated_replication_preserves_exact_logical_identity(tmp_path) -> Non
     )
 
 
+def test_validated_replication_forwards_source_routing_metadata(tmp_path) -> None:
+    content = b'{"count":1,"vulnerabilities":[{}]}'
+    local = LocalRawArtifactStore(tmp_path).store(
+        "cisa_kev", content, ACQUIRED_AT, "json"
+    )
+    observed = {}
+
+    class ReplicaStore:
+        backend = "s3"
+
+        def store(
+            self, source, raw, acquired_at, extension, *, content_type=None, metadata=None
+        ):
+            observed.update(metadata)
+            return RawArtifactRef(
+                source=source,
+                sha256=sha256(raw).hexdigest(),
+                uri=f"s3://bronze/{local.sha256}.json",
+                extension=extension,
+                content_type=content_type,
+                size_bytes=len(raw),
+                created=True,
+                backend="s3",
+            )
+
+    replicate_validated_artifact(
+        ReplicaStore(),
+        local,
+        content,
+        ACQUIRED_AT,
+        metadata={"request-mode": "snapshot", "record-count": "1"},
+    )
+    assert observed == {"request-mode": "snapshot", "record-count": "1"}
+
+
 def test_validated_replication_rejects_changed_identity(tmp_path) -> None:
     local = LocalRawArtifactStore(tmp_path).store("nvd", b"raw", ACQUIRED_AT, "json")
 

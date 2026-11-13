@@ -31,3 +31,21 @@ run "rejects_fifo_destination" {
 
   expect_failures = [var.queue_arn]
 }
+
+run "preserves_epss_and_adds_filtered_cisa_notification" {
+  command = apply
+
+  variables {
+    cisa_queue_arn = "arn:aws:sqs:eu-central-1:123456789012:threatflow-cisa-events-test"
+  }
+
+  assert {
+    condition = (
+      length(aws_s3_bucket_notification.this.queue) == 2 &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "epss-bronze-object-created"]).filter_prefix == "bronze/source=epss/" &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "cisa-bronze-object-created"]).filter_prefix == "bronze/source=cisa_kev/" &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "cisa-bronze-object-created"]).filter_suffix == ".json"
+    )
+    error_message = "The shared bucket notification must preserve EPSS and add filtered CISA events."
+  }
+}

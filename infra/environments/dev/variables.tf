@@ -144,6 +144,33 @@ variable "epss_silver_event_source_maximum_concurrency" {
   default     = 2
 }
 
+variable "cisa_silver_lambda_image_uri" {
+  description = "Immutable ECR image URI for the CISA Silver Lambda."
+  type        = string
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.cisa_silver_lambda_image_uri))
+    error_message = "cisa_silver_lambda_image_uri must end in @sha256:<64 lowercase hex characters>."
+  }
+}
+
+variable "cisa_silver_event_source_mapping_enabled" {
+  description = "Enable CISA SQS polling after direct-invoke verification."
+  type        = bool
+  default     = false
+}
+
+variable "cisa_minimum_record_count" {
+  description = "Absolute fail-closed floor for incremental CISA catalogs."
+  type        = number
+  default     = 100
+}
+
+variable "cisa_minimum_previous_ratio" {
+  description = "Minimum ratio to the latest committed CISA snapshot count."
+  type        = number
+  default     = 0.8
+}
+
 variable "create_airflow_local_identity" {
   description = "Create the local-only IAM user used by Airflow through temporary aws login credentials."
   type        = bool

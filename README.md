@@ -264,6 +264,25 @@ the commit marker. The caller needs narrowly scoped S3 read/write access under
 `silver/cisa_kev_snapshots/*`; the current local Airflow IAM identity is Bronze-only and is not
 automatically broadened by this application command.
 
+The incremental AWS path accepts only newly promoted daily CISA objects carrying validated Bronze
+metadata `request-mode=snapshot` and `record-count`. It reads the exact notified S3 `versionId`,
+rechecks checksum, encryption, metadata, catalog structure, declared count, and duplicates, then
+publishes the same immutable CISA Silver contract. Historical `git_history` remains exclusively in
+the bootstrap/publisher path; diagnostic `git_history_invalid` is never replicated or processed.
+This event contract is produced by the validated local-to-S3 replication path. A direct S3 Raw
+backend writes before source validation and therefore lacks the routing metadata; such objects are
+rejected by the Lambda and must not be used for the incremental CISA path.
+
+The Lambda maintains `silver/cisa_kev_snapshots/_latest.json` as a small current-snapshot control
+pointer. A new catalog must contain at least `THREATFLOW_CISA_MINIMUM_RECORD_COUNT` rows and at
+least `THREATFLOW_CISA_MINIMUM_PREVIOUS_RATIO` of the latest committed count. The defaults are 100
+and 0.8. Failed SQS records are returned through partial batch failure handling for retry and DLQ.
+The dedicated ARM64 image is under `lambda/cisa_silver`; Terraform creates its CISA-only Standard
+queue, DLQ, ECR repository, Lambda role, log group, and event-source mapping. The shared Bronze
+bucket notification retains the existing EPSS filter and adds
+`bronze/source=cisa_kev/*.json`. The CISA mapping defaults to disabled until image deployment and
+direct-invoke verification are complete.
+
 Build and smoke-test the Lambda image locally without AWS credentials:
 
 ```bash

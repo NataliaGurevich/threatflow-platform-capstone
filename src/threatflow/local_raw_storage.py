@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -31,8 +32,10 @@ class LocalRawArtifactStore:
         extension: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> RawArtifactRef:
         """Store bytes once under their source, acquisition month, and content hash."""
+        del metadata
         normalized_extension, resolved_content_type = validate_raw_artifact_input(
             source, content, acquired_at, extension, content_type
         )

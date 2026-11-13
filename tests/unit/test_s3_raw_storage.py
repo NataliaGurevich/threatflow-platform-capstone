@@ -137,6 +137,30 @@ def test_store_rejects_existing_object_with_wrong_checksum() -> None:
             )
 
 
+def test_store_persists_and_verifies_source_routing_metadata() -> None:
+    client = _client()
+    metadata = {"request-mode": "snapshot", "record-count": "1"}
+    put = _put_parameters()
+    put["Metadata"] = {**put["Metadata"], **metadata}
+    head = _head_response(Metadata=put["Metadata"])
+    with Stubber(client) as stubber:
+        stubber.add_response("put_object", {"VersionId": "version-1"}, put)
+        stubber.add_response(
+            "head_object", head, _head_parameters(version_id="version-1")
+        )
+        artifact = S3RawArtifactStore(BUCKET, client=client).store(
+            "nvd", CONTENT, ACQUIRED_AT, "json", metadata=metadata
+        )
+    assert artifact.created is True
+
+
+def test_store_rejects_reserved_source_routing_metadata() -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        S3RawArtifactStore(BUCKET, client=_client()).store(
+            "nvd", CONTENT, ACQUIRED_AT, "json", metadata={"source": "other"}
+        )
+
+
 def test_store_propagates_non_idempotency_s3_error() -> None:
     client = _client()
     with Stubber(client) as stubber:

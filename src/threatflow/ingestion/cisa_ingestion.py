@@ -92,7 +92,14 @@ def ingest_cisa_kev(
         if replica_store is None:
             replica_store = create_validated_replica_store(settings)
         replica = replicate_validated_artifact(
-            replica_store, artifact, content, acquired_at
+            replica_store,
+            artifact,
+            content,
+            acquired_at,
+            metadata={
+                "request-mode": "snapshot",
+                "record-count": str(len(records)),
+            },
         )
 
         with engine.begin() as connection:
@@ -252,7 +259,15 @@ def backfill_cisa_kev(
             if replica_store is None:
                 replica_store = create_validated_replica_store(settings)
             replica = replicate_validated_artifact(
-                replica_store, artifact, content, acquired_at
+                replica_store,
+                artifact,
+                content,
+                acquired_at,
+                metadata={
+                    "request-mode": "git_history",
+                    "record-count": str(len(records)),
+                    "source-revision": commit.sha,
+                },
             )
             with engine.begin() as connection:
                 from sqlalchemy.orm import Session

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -74,6 +75,7 @@ class S3RawArtifactStore:
         extension: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> RawArtifactRef:
         """Create one immutable object or safely reuse its verified existing equivalent."""
         normalized_extension, resolved_content_type = validate_raw_artifact_input(
@@ -82,6 +84,7 @@ class S3RawArtifactStore:
         if acquired_at.tzinfo is None or acquired_at.utcoffset() is None:
             raise ValueError("acquired_at must be timezone-aware for S3 metadata")
         digest = calculate_sha256(content)
+        extra_metadata = _validate_extra_metadata(metadata)
         checksum_sha256 = _base64_sha256(digest)
         object_key = self._object_key(source, digest, normalized_extension)
         created = False
@@ -99,6 +102,7 @@ class S3RawArtifactStore:
                     "sha256": digest,
                     "source": source,
                     "acquired-at": acquired_at.astimezone(UTC).isoformat(),
+                    **extra_metadata,
                 },
                 ServerSideEncryption="AES256",
                 IfNoneMatch="*",
@@ -124,6 +128,7 @@ class S3RawArtifactStore:
             size_bytes=len(content),
             content_type=resolved_content_type,
             checksum_sha256=checksum_sha256,
+            extra_metadata=extra_metadata,
         )
 
         return RawArtifactRef(
@@ -202,6 +207,7 @@ class S3RawArtifactStore:
         size_bytes: int,
         content_type: str,
         checksum_sha256: str,
+        extra_metadata: Mapping[str, str],
     ) -> None:
         metadata = head.get("Metadata", {})
         mismatches = []
@@ -219,10 +225,25 @@ class S3RawArtifactStore:
             mismatches.append("Metadata.source")
         if not metadata.get("acquired-at"):
             mismatches.append("Metadata.acquired-at")
+        for name, value in extra_metadata.items():
+            if metadata.get(name) != value:
+                mismatches.append(f"Metadata.{name}")
         if mismatches:
             raise RawArtifactIntegrityError(
                 f"stored S3 object failed integrity verification: {', '.join(mismatches)}"
             )
+
+
+def _validate_extra_metadata(metadata: Mapping[str, str] | None) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for name, value in (metadata or {}).items():
+        normalized = name.strip().lower()
+        if normalized in {"sha256", "source", "acquired-at"}:
+            raise ValueError(f"reserved S3 Raw metadata key: {normalized}")
+        if not normalized or not isinstance(value, str) or not value.strip():
+            raise ValueError("S3 Raw metadata keys and values must not be empty")
+        result[normalized] = value
+    return result
 
 
 def _base64_sha256(hex_digest: str) -> str:

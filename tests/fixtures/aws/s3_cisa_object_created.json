@@ -1,0 +1,16 @@
+{
+  "Records": [
+    {
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "s3": {
+        "bucket": {"name": "threatflow-bronze-test"},
+        "object": {
+          "key": "bronze%2Fsource%3Dcisa_kev%2Fsha256%3DREPLACE_SHA256.json",
+          "size": 1,
+          "versionId": "bronze-version-1"
+        }
+      }
+    }
+  ]
+}

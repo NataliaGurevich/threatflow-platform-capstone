@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,7 @@ class RawArtifactStore(Protocol):
         extension: str,
         *,
         content_type: str | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> RawArtifactRef: ...
 
     def read(self, artifact: RawArtifactRef | str) -> bytes: ...
@@ -155,18 +157,23 @@ def replicate_validated_artifact(
     local_artifact: RawArtifactRef,
     content: bytes,
     acquired_at: datetime,
+    *,
+    metadata: Mapping[str, str] | None = None,
 ) -> RawArtifactRef | None:
     """Copy exact validated bytes to S3 and verify that logical identity is unchanged."""
     if replica_store is None:
         return None
     if local_artifact.backend != "local":
         raise ValueError("validated S3 replication requires a local source artifact")
+    storage_options = {"content_type": local_artifact.content_type}
+    if metadata is not None:
+        storage_options["metadata"] = metadata
     replica = replica_store.store(
         local_artifact.source,
         content,
         acquired_at,
         local_artifact.extension,
-        content_type=local_artifact.content_type,
+        **storage_options,
     )
     expected = (
         local_artifact.source,

@@ -1,0 +1,7 @@
+**
+!lambda/
+!lambda/cisa_silver/
+!lambda/cisa_silver/requirements.txt
+!src/
+!src/threatflow/
+!src/threatflow/**

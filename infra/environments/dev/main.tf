@@ -93,17 +93,42 @@ module "epss_silver_lambda" {
   }
 }
 
+module "cisa_silver_runtime" {
+  source = "../../modules/cisa_silver_runtime"
+
+  name_prefix            = "threatflow-cisa-silver-dev"
+  image_uri              = var.cisa_silver_lambda_image_uri
+  aws_region             = var.aws_region
+  account_id             = data.aws_caller_identity.current.account_id
+  bronze_bucket_name     = module.bronze_storage.bucket_name
+  bronze_bucket_arn      = module.bronze_storage.bucket_arn
+  bronze_prefix          = var.bronze_prefix
+  silver_bucket_name     = module.silver_storage.bucket_name
+  silver_bucket_arn      = module.silver_storage.bucket_arn
+  silver_prefix          = var.silver_prefix
+  mapping_enabled        = var.cisa_silver_event_source_mapping_enabled
+  minimum_record_count   = var.cisa_minimum_record_count
+  minimum_previous_ratio = var.cisa_minimum_previous_ratio
+
+  tags = {
+    Owner    = "capstone"
+    DataFlow = "cisa-bronze-to-silver"
+  }
+}
+
 module "epss_bronze_notification" {
   source = "../../modules/epss_bronze_notification"
 
   bronze_bucket_name = module.bronze_storage.bucket_name
   bronze_prefix      = var.bronze_prefix
   queue_arn          = module.epss_silver_queue.queue_arn
+  cisa_queue_arn     = module.cisa_silver_runtime.queue_arn
 
   # S3 sends a destination-validation TestEvent when this resource is created.
   # Ensure the updated handler and active SQS mapping can acknowledge it first.
   depends_on = [
     module.epss_silver_queue,
     module.epss_silver_lambda,
+    module.cisa_silver_runtime,
   ]
 }

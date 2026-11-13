@@ -28,3 +28,10 @@ variable "queue_arn" {
     error_message = "queue_arn must be a valid Standard SQS queue ARN."
   }
 }
+
+variable "cisa_queue_arn" {
+  description = "ARN of the Standard SQS queue receiving CISA Bronze events."
+  type        = string
+  default     = null
+  nullable    = true
+}

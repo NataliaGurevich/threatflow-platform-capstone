@@ -1,0 +1,18 @@
+{
+  "Records": [
+    {
+      "eventSource": "aws:s3",
+      "eventName": "ObjectCreated:Put",
+      "awsRegion": "eu-central-1",
+      "s3": {
+        "bucket": {"name": "REPLACE_WITH_BRONZE_BUCKET"},
+        "object": {
+          "key": "bronze%2Fsource%3Dcisa_kev%2Fsha256%3DREPLACE_WITH_64_CHARACTER_SHA256.json",
+          "size": 123456,
+          "versionId": "REPLACE_WITH_S3_VERSION_ID",
+          "sequencer": "manual-invocation"
+        }
+      }
+    }
+  ]
+}
