@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
@@ -24,6 +25,7 @@ class Vulnerability(BaseModel):
     dueDate: date
     knownRansomwareCampaignUse: str
     notes: str | None = None
+    cwes: list[str] | None = None
 
     @field_validator("dateAdded", "dueDate", mode="before")
     @classmethod
@@ -47,9 +49,36 @@ class Catalog(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
     vulnerabilities: list[Vulnerability]
     count: int | None = None
+    catalogVersion: str | None = None
+    dateReleased: datetime | None = None
+
+    @field_validator("dateReleased", mode="before")
+    @classmethod
+    def parse_release_datetime(cls, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("dateReleased must be an ISO timestamp string")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("dateReleased must be a valid ISO timestamp") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("dateReleased must include a timezone")
+        return parsed
 
 
-def parse_catalog(content: bytes) -> list[dict[str, Any]]:
+@dataclass(frozen=True)
+class ParsedCatalog:
+    """Validated CISA document including catalog-level lineage metadata."""
+
+    catalog_version: str | None
+    date_released: datetime | None
+    declared_count: int | None
+    records: tuple[dict[str, Any], ...]
+
+
+def parse_catalog_document(content: bytes) -> ParsedCatalog:
     try:
         value = json.loads(content)
         catalog = Catalog.model_validate(value)
@@ -59,7 +88,10 @@ def parse_catalog(content: bytes) -> list[dict[str, Any]]:
         raise ValueError("CISA KEV catalog is empty")
     if catalog.count is not None and catalog.count != len(catalog.vulnerabilities):
         raise ValueError("CISA KEV catalog count does not match vulnerabilities")
-    return [
+    cve_ids = [record.cveID for record in catalog.vulnerabilities]
+    if len(cve_ids) != len(set(cve_ids)):
+        raise ValueError("CISA KEV catalog contains duplicate CVE identifiers")
+    records = tuple(
         {
             "cve_id": r.cveID,
             "vendor_project": r.vendorProject,
@@ -71,6 +103,19 @@ def parse_catalog(content: bytes) -> list[dict[str, Any]]:
             "due_date": r.dueDate,
             "known_ransomware_campaign_use": r.knownRansomwareCampaignUse,
             "notes": r.notes,
+            "cwes": tuple(r.cwes) if r.cwes is not None else None,
         }
         for r in catalog.vulnerabilities
-    ]
+    )
+    return ParsedCatalog(
+        catalog_version=catalog.catalogVersion,
+        date_released=catalog.dateReleased,
+        declared_count=catalog.count,
+        records=records,
+    )
+
+
+def parse_catalog(content: bytes) -> list[dict[str, Any]]:
+    """Return the existing PostgreSQL projection for backward compatibility."""
+    records = parse_catalog_document(content).records
+    return [{key: value for key, value in record.items() if key != "cwes"} for record in records]
