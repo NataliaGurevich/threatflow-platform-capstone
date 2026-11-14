@@ -5,3 +5,6 @@ output "dlq_url" { value = aws_sqs_queue.dlq.id }
 output "repository_url" { value = aws_ecr_repository.this.repository_url }
 output "function_name" { value = aws_lambda_function.this.function_name }
 output "function_arn" { value = aws_lambda_function.this.arn }
+output "queue_name" { value = aws_sqs_queue.events.name }
+output "dlq_name" { value = aws_sqs_queue.dlq.name }
+output "log_group_name" { value = aws_cloudwatch_log_group.this.name }

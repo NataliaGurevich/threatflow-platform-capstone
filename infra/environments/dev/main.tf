@@ -132,3 +132,23 @@ module "epss_bronze_notification" {
     module.cisa_silver_runtime,
   ]
 }
+
+module "pipeline_observability" {
+  source = "../../modules/pipeline_observability"
+
+  name_prefix         = "threatflow-dev"
+  aws_region          = var.aws_region
+  cisa_log_group_name = module.cisa_silver_runtime.log_group_name
+  epss_log_group_name = module.epss_silver_lambda.log_group_name
+  cisa_function_name  = module.cisa_silver_runtime.function_name
+  epss_function_name  = module.epss_silver_lambda.function_name
+  cisa_queue_name     = module.cisa_silver_runtime.queue_name
+  epss_queue_name     = module.epss_silver_queue.queue_name
+  cisa_dlq_name       = module.cisa_silver_runtime.dlq_name
+  epss_dlq_name       = module.epss_silver_queue.dlq_name
+
+  tags = {
+    Owner   = "capstone"
+    Purpose = "bronze-to-silver-observability"
+  }
+}

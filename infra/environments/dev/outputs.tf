@@ -109,6 +109,21 @@ output "cisa_silver_lambda_function_name" {
   value = module.cisa_silver_runtime.function_name
 }
 
+output "pipeline_dashboard_name" {
+  description = "CloudWatch dashboard for CISA and EPSS Bronze-to-Silver processing."
+  value       = module.pipeline_observability.dashboard_name
+}
+
+output "pipeline_dashboard_arn" {
+  description = "ARN of the Bronze-to-Silver CloudWatch dashboard."
+  value       = module.pipeline_observability.dashboard_arn
+}
+
+output "pipeline_alarm_names" {
+  description = "CloudWatch alarms monitoring failures, stalled queues, and DLQs."
+  value       = module.pipeline_observability.alarm_names
+}
+
 output "airflow_local_user_arn" {
   description = "Local Airflow IAM user ARN, or null when the identity is disabled."
   value       = try(aws_iam_user.airflow_local[0].arn, null)

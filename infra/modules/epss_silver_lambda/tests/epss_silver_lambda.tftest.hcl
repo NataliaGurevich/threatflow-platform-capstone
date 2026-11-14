@@ -62,7 +62,7 @@ run "creates_least_privilege_arm64_image_lambda" {
   assert {
     condition = (
       aws_cloudwatch_log_group.this.name == "/aws/lambda/${var.function_name}" &&
-      aws_cloudwatch_log_group.this.retention_in_days == 14 &&
+      aws_cloudwatch_log_group.this.retention_in_days == 30 &&
       one(aws_lambda_function.this.logging_config).log_format == "JSON"
     )
     error_message = "The function must use a pre-created JSON log group with bounded retention."

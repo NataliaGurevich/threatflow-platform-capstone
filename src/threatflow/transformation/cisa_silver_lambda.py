@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -29,6 +30,7 @@ from threatflow.transformation.cisa_silver_publish import (
     CisaSilverS3Publisher,
     load_cisa_silver_publish_candidates,
 )
+from threatflow.transformation.pipeline_events import emit_pipeline_event
 
 LOGGER = logging.getLogger(__name__)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -359,7 +361,50 @@ def process_s3_notification(
     records = event.get("Records")
     if not isinstance(records, list) or not records:
         raise ValueError("S3 notification must contain at least one record")
-    return [processor.process(_parse_s3_record(record, processor.config)) for record in records]
+    results = []
+    for record in records:
+        bronze = _parse_s3_record(record, processor.config)
+        started = time.monotonic()
+        emit_pipeline_event(
+            LOGGER,
+            event="bronze_received",
+            source="cisa_kev",
+            source_sha256=bronze.source_sha256,
+            bronze_bucket=bronze.bucket,
+            bronze_key=bronze.key,
+            bronze_version_id=bronze.version_id,
+            bronze_size_bytes=bronze.size_bytes,
+        )
+        try:
+            result = processor.process(bronze)
+        except Exception as exc:
+            emit_pipeline_event(
+                LOGGER,
+                event="processing_failed",
+                source="cisa_kev",
+                source_sha256=bronze.source_sha256,
+                bronze_bucket=bronze.bucket,
+                bronze_key=bronze.key,
+                bronze_version_id=bronze.version_id,
+                duration_ms=round((time.monotonic() - started) * 1000),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+        emit_pipeline_event(
+            LOGGER,
+            event="silver_committed" if result.created else "silver_reused",
+            source="cisa_kev",
+            source_sha256=bronze.source_sha256,
+            bronze_bucket=bronze.bucket,
+            bronze_key=bronze.key,
+            bronze_version_id=bronze.version_id,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            record_count=result.record_count,
+            silver_uri=result.parquet_path,
+        )
+        results.append(result)
+    return results
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:

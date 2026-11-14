@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from functools import lru_cache
@@ -28,6 +29,7 @@ from threatflow.transformation.epss_silver import (
     EpssSilverResult,
     transform_epss_bytes,
 )
+from threatflow.transformation.pipeline_events import emit_pipeline_event
 
 LOGGER = logging.getLogger(__name__)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -407,15 +409,46 @@ def process_s3_notification(
         raise ValueError("S3 notification must contain at least one record")
     results = []
     for record in records:
-        result = processor.process(_parse_s3_record(record, processor.config))
-        LOGGER.info(
-            "EPSS Silver partition processed: score_date=%s created=%s "
-            "record_count=%s source_sha256=%s parquet_path=%s",
-            result.score_date.isoformat(),
-            result.created,
-            result.record_count,
-            result.source_sha256,
-            result.parquet_path,
+        bronze = _parse_s3_record(record, processor.config)
+        started = time.monotonic()
+        emit_pipeline_event(
+            LOGGER,
+            event="bronze_received",
+            source="epss",
+            source_sha256=bronze.source_sha256,
+            bronze_bucket=bronze.bucket,
+            bronze_key=bronze.key,
+            bronze_version_id=bronze.version_id,
+            bronze_size_bytes=bronze.size_bytes,
+        )
+        try:
+            result = processor.process(bronze)
+        except Exception as exc:
+            emit_pipeline_event(
+                LOGGER,
+                event="processing_failed",
+                source="epss",
+                source_sha256=bronze.source_sha256,
+                bronze_bucket=bronze.bucket,
+                bronze_key=bronze.key,
+                bronze_version_id=bronze.version_id,
+                duration_ms=round((time.monotonic() - started) * 1000),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+        emit_pipeline_event(
+            LOGGER,
+            event="silver_committed" if result.created else "silver_reused",
+            source="epss",
+            source_sha256=bronze.source_sha256,
+            bronze_bucket=bronze.bucket,
+            bronze_key=bronze.key,
+            bronze_version_id=bronze.version_id,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            record_count=result.record_count,
+            score_date=result.score_date.isoformat(),
+            silver_uri=result.parquet_path,
         )
         results.append(result)
     return results

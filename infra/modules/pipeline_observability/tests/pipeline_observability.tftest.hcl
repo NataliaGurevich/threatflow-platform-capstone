@@ -1,0 +1,66 @@
+mock_provider "aws" {
+  mock_resource "aws_cloudwatch_metric_alarm" {
+    defaults = {
+      arn = "arn:aws:cloudwatch:eu-central-1:123456789012:alarm:mock"
+    }
+  }
+}
+
+variables {
+  name_prefix         = "threatflow-test"
+  aws_region          = "eu-central-1"
+  cisa_log_group_name = "/aws/lambda/threatflow-cisa-silver-test"
+  epss_log_group_name = "/aws/lambda/threatflow-epss-silver-test"
+  cisa_function_name  = "threatflow-cisa-silver-test"
+  epss_function_name  = "threatflow-epss-silver-test"
+  cisa_queue_name     = "threatflow-cisa-events-test"
+  epss_queue_name     = "threatflow-epss-events-test"
+  cisa_dlq_name       = "threatflow-cisa-events-dlq-test"
+  epss_dlq_name       = "threatflow-epss-events-dlq-test"
+}
+
+run "creates_bounded_pipeline_observability" {
+  command = apply
+
+  assert {
+    condition     = length(aws_cloudwatch_log_metric_filter.audit) == 8
+    error_message = "CISA and EPSS must each emit received, committed, reused, and failed metrics."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_log_metric_filter.audit["cisa_bronze_received"].log_group_name == var.cisa_log_group_name &&
+      one(aws_cloudwatch_log_metric_filter.audit["cisa_bronze_received"].metric_transformation).name == "CISABronzeReceived" &&
+      one(aws_cloudwatch_log_metric_filter.audit["cisa_silver_reused"].metric_transformation).name == "CISASilverReused" &&
+      aws_cloudwatch_log_metric_filter.audit["epss_processing_failed"].log_group_name == var.epss_log_group_name &&
+      one(aws_cloudwatch_log_metric_filter.audit["epss_processing_failed"].metric_transformation).name == "EPSSProcessingFailed"
+    )
+    error_message = "Metric filters must bind each audit event to its source Lambda log group."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in aws_cloudwatch_metric_alarm.processing_failed :
+      alarm.treat_missing_data == "notBreaching" && alarm.datapoints_to_alarm == 1
+    ])
+    error_message = "Sparse processing-failure alarms must not alarm when data is missing."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in aws_cloudwatch_metric_alarm.queue_age :
+      alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"
+    ])
+    error_message = "Queue-stall alarms must use 2-of-3 evaluation and explicit missing-data behavior."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "Bronze to Silver health") &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.cisa_log_group_name) &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.epss_log_group_name) &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "pipeline_event")
+    )
+    error_message = "The dashboard must combine alarms, source metrics, and recent structured transitions."
+  }
+}

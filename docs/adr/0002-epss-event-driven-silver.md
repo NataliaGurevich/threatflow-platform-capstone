@@ -36,13 +36,15 @@ The application handler and fixture tests are implemented. Terraform now defines
 bucket, a Standard source queue, and a dedicated DLQ with bounded redrive. Lambda packaging and
 the private ECR repository are implemented with an ARM64 Python 3.12/PyArrow container image.
 Terraform also defines the ARM64 image function by immutable digest, a dedicated execution role,
-and a 14-day CloudWatch log group. The role reads only exact EPSS Bronze object versions,
+and a 30-day CloudWatch log group. The role reads only exact EPSS Bronze object versions,
 reads/writes only the EPSS Silver dataset prefix, and polls only the dedicated EPSS queue. The
 enabled SQS event-source mapping uses a one-message batch, partial failure reporting, and maximum
 concurrency two. A direct S3 event fixture supports both manual Lambda invocation and a controlled
 SQS message test. A filtered S3 notification publishes new EPSS Bronze `.csv.gz` object-created
 events directly to the queue. The handler safely acknowledges S3's destination-validation event
-for the configured bucket. CloudWatch alarms remain a separate deployment slice.
+for the configured bucket. A shared CloudWatch dashboard now presents CISA and EPSS structured
+object transitions, queue/DLQ state, Lambda errors, and alarms in one operational view. Inventory
+reconciliation between S3 Bronze objects and committed Silver manifests remains a separate slice.
 
 ## Consequences
 

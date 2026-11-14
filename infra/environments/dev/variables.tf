@@ -129,7 +129,7 @@ variable "epss_silver_lambda_reserved_concurrency" {
 variable "epss_silver_lambda_log_retention_days" {
   description = "Retention period for EPSS Silver Lambda CloudWatch logs."
   type        = number
-  default     = 14
+  default     = 30
 }
 
 variable "epss_silver_event_source_mapping_enabled" {

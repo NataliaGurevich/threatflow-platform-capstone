@@ -6,7 +6,8 @@ Silver datasets. A third module defines the Standard queue and DLQ that decouple
 from the EPSS transformation Lambda. A fourth module creates the private ECR repository for its
 container image. A fifth module creates the image-based ARM64 Lambda, its dedicated execution role,
 and a bounded CloudWatch log group. A sixth module configures the filtered Bronze-to-SQS event
-notification. The Bronze module also exposes a
+notification. The pipeline observability module combines CISA and EPSS health, audit events,
+queues, and alarms in one CloudWatch dashboard. The Bronze module also exposes a
 least-privilege ingestion policy that the development root can attach to the dedicated local
 Airflow identity.
 
@@ -24,6 +25,7 @@ infra/
 ├── modules/epss_silver_image/    private ECR image repository module
 ├── modules/epss_silver_lambda/   Lambda, execution role, and log group module
 ├── modules/epss_bronze_notification/ filtered S3-to-SQS notification module
+├── modules/pipeline_observability/ CloudWatch dashboard, metrics, and alarms
 └── environments/dev/             development root module
 ```
 
@@ -84,7 +86,7 @@ unreserved account concurrency pool. This is compatible with development account
 concurrency quota is too small to allocate function-level reservations. The SQS event-source
 mapping caps this data flow at two concurrent invocations without reserving account capacity. The
 30-minute queue visibility timeout is validated as at least six times the function timeout.
-CloudWatch logs use JSON format and expire after 14 days by default; Terraform creates the group
+CloudWatch logs use JSON format and expire after 30 days by default; Terraform creates the group
 before the function, so its role does not need `logs:CreateLogGroup`.
 
 ## Static verification without AWS access
@@ -111,6 +113,9 @@ terraform -chdir=infra/modules/epss_silver_lambda test
 
 terraform -chdir=infra/modules/epss_bronze_notification init -backend=false
 terraform -chdir=infra/modules/epss_bronze_notification test
+
+terraform -chdir=infra/modules/pipeline_observability init -backend=false
+terraform -chdir=infra/modules/pipeline_observability test
 ```
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
@@ -260,7 +265,21 @@ scan charge; enhanced continuous scanning would add Amazon Inspector cost and is
 enabled account-wide for this development capstone. Lambda charges accrue only for requests and
 execution duration. The SQS event-source mapping limits parallelism without reserving the
 account's small shared concurrency quota. CloudWatch Logs charges depend on ingestion and
-retained bytes, with retention bounded to 14 days by default.
+retained bytes, with retention bounded to 30 days by default.
+
+The `threatflow-dev-bronze-to-silver` dashboard is the operational entry point for both event
+paths. Each accepted notification emits compact JSON audit events named `bronze_received`,
+`silver_committed`, `silver_reused`, or `processing_failed`, linked by source SHA-256 and the exact
+Bronze object version. The dashboard shows recent transitions, committed counts, Lambda errors,
+source-queue backlog, DLQ backlog, and the status of six alarms. Alarms fire for a structured
+processing failure, a queue message older than 15 minutes for two of three evaluation periods, or
+any visible DLQ message; missing sparse metrics are treated as healthy. No notification action is
+attached yet, so operators see alarm state in CloudWatch without receiving email or chat alerts.
+
+This slice observes events that reached Lambda. It does not yet reconcile the complete S3 Bronze
+inventory against Silver manifests, so a missing S3-to-SQS notification must still be detected by
+the next reconciliation slice. CloudWatch Logs Insights widgets rerun queries when the dashboard
+loads or refreshes and can incur scan charges; keep the time range narrow for routine checks.
 
 The storage slices do not create a log bucket or trail. Before treating the environment as more
 than a capstone development deployment, add scoped CloudTrail S3 data events, encrypted log

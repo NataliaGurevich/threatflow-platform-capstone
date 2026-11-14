@@ -62,7 +62,7 @@ variable "mapping_enabled" {
 }
 variable "log_retention_days" {
   type    = number
-  default = 14
+  default = 30
 }
 variable "minimum_record_count" {
   type    = number

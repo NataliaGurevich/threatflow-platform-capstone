@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -153,26 +154,44 @@ def processor(client):
     )
 
 
-def test_processes_exact_snapshot_version_and_replay_is_idempotent():
+def test_processes_exact_snapshot_version_and_replay_is_idempotent(caplog):
     content = raw()
     client = MemoryS3(content)
-    created = process_s3_notification(event(content), processor(client))[0]
-    replay = process_s3_notification(event(content), processor(client))[0]
+    with caplog.at_level(logging.INFO):
+        created = process_s3_notification(event(content), processor(client))[0]
+        replay = process_s3_notification(event(content), processor(client))[0]
     assert created.created is True
     assert replay.created is False
     assert created.record_count == 2
     assert created.parquet_path.startswith(f"s3://{SILVER_BUCKET}/silver/cisa_kev_snapshots/")
     assert client.put_calls.count("silver/cisa_kev_snapshots/_latest.json") == 1
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.message.startswith("{")
+    ]
+    assert [item["event"] for item in events] == [
+        "bronze_received",
+        "silver_committed",
+        "bronze_received",
+        "silver_reused",
+    ]
+    assert events[1]["record_count"] == 2
+    assert events[1]["source"] == "cisa_kev"
 
 
-def test_rejects_non_snapshot_metadata_before_silver_write():
+def test_rejects_non_snapshot_metadata_before_silver_write(caplog):
     content = raw()
     client = MemoryS3(content)
     bronze = next(iter(client.objects.values()))
     bronze["metadata"]["request-mode"] = "git_history"
-    with pytest.raises(ValueError, match="request-mode"):
-        process_s3_notification(event(content), processor(client))
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(ValueError, match="request-mode"):
+            process_s3_notification(event(content), processor(client))
     assert client.put_calls == []
+    failure = json.loads(caplog.records[-1].message)
+    assert failure["event"] == "processing_failed"
+    assert failure["error_type"] == "ValueError"
 
 
 def test_rejects_declared_metadata_count_mismatch():

@@ -31,7 +31,7 @@ epss_silver_lambda_execution_role_name  = "threatflow-epss-silver-dev-execution"
 epss_silver_lambda_memory_size_mb       = 2048
 epss_silver_lambda_timeout_seconds      = 300
 epss_silver_lambda_reserved_concurrency = -1
-epss_silver_lambda_log_retention_days   = 14
+epss_silver_lambda_log_retention_days   = 30
 epss_silver_event_source_mapping_enabled     = true
 epss_silver_event_source_maximum_concurrency = 2
 

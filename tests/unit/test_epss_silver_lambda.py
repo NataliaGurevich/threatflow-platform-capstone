@@ -229,9 +229,35 @@ def test_sqs_wrapper_reports_only_failed_messages(monkeypatch, caplog) -> None:
         response = lambda_handler(event, None)
 
     assert response == {"batchItemFailures": [{"itemIdentifier": "bad-message"}]}
-    assert "EPSS Silver partition processed" in caplog.text
-    assert "score_date=2026-11-11" in caplog.text
-    assert "created=True" in caplog.text
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.message.startswith("{")
+    ]
+    assert [item["event"] for item in events] == [
+        "bronze_received",
+        "silver_committed",
+    ]
+    assert events[1]["score_date"] == "2026-11-11"
+    assert events[1]["record_count"] == 2
+    assert events[1]["source"] == "epss"
+
+
+def test_processing_failure_emits_structured_audit_event(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    client = MemoryS3(raw() + b"corrupt")
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(ValueError, match="integrity verification"):
+            process_s3_notification(load_event(), processor(client))
+
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.message.startswith("{")
+    ]
+    assert events[-1]["event"] == "processing_failed"
+    assert events[-1]["error_type"] == "ValueError"
 
 
 def test_sqs_wrapper_acknowledges_expected_s3_destination_test_event(monkeypatch) -> None:
