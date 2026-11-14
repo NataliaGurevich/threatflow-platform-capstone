@@ -22,6 +22,18 @@ VERSION_ID = "bronze-version-1"
 FIXTURE = Path("tests/fixtures/aws/s3_cisa_object_created.json")
 
 
+@pytest.fixture(autouse=True)
+def enable_lambda_logger_for_capture():
+    """Isolate these tests from Airflow's process-wide logging configuration."""
+    logger = logging.getLogger("threatflow.transformation.cisa_silver_lambda")
+    previously_disabled = logger.disabled
+    logger.disabled = False
+    try:
+        yield
+    finally:
+        logger.disabled = previously_disabled
+
+
 def raw(records=2):
     vulnerabilities = []
     for index in range(records):

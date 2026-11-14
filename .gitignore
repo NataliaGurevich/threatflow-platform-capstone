@@ -56,6 +56,8 @@ tfplan
 *.tfplan
 *.tfvars
 !*.tfvars.example
+*.auto.tfvars.json
+release-manifest.json
 crash.log
 crash.*.log
 override.tf

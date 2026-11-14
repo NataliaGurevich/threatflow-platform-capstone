@@ -120,6 +120,49 @@ terraform -chdir=infra/modules/pipeline_observability test
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
 
+## Repeatable local releases
+
+Two checked-in scripts keep local Airflow rebuilds separate from AWS Lambda releases because the
+images have different lifecycles. Neither script runs on a DAG schedule, and an AWS login refresh
+never requires an image rebuild.
+
+Rebuild the local Airflow image only after changing application code, Python dependencies, or the
+Airflow Dockerfile:
+
+```sh
+scripts/rebuild-airflow.sh
+```
+
+The script runs Ruff and the unit/Airflow tests, validates the AWS Compose overlay, refuses to
+recreate the LocalExecutor scheduler while task instances are running, builds the image, and then
+verifies its image ID, installed CISA source hash, metadata contract, and non-root AWS identity.
+`--force` is an explicit emergency override for the running-task guard; `--skip-tests` is intended
+only for a previously verified local iteration.
+
+Create a Lambda release and saved Terraform plan with:
+
+```sh
+AWS_PROFILE=threatflow-deploy scripts/release-aws-lambdas.sh plan
+terraform -chdir=infra/environments/dev show tfplan
+AWS_PROFILE=threatflow-deploy scripts/release-aws-lambdas.sh apply
+```
+
+`plan` is not read-only: it builds, smoke-tests, and pushes uniquely tagged ARM64 CISA and EPSS
+images to ECR. It resolves both immutable digests, writes the ignored
+`image-overrides.auto.tfvars.json`, validates Terraform, and saves `tfplan` plus an ignored release
+manifest containing the plan checksum. It does not apply infrastructure. `apply` verifies that
+checksum, applies only the saved plan, and confirms both Lambda resolved digests, function states,
+event-source mappings, and the CloudWatch dashboard. A later audit can run without mutation:
+
+```sh
+AWS_PROFILE=threatflow-deploy scripts/release-aws-lambdas.sh verify
+```
+
+The workflow verifies account `020502037761` and Region `eu-central-1` by default. Override the
+account only through `THREATFLOW_AWS_ACCOUNT_ID` for a deliberate environment migration. Generated
+auto-tfvars, plans, and manifests remain outside Git. ECR image storage, image scanning, Lambda,
+CloudWatch, and Terraform-managed resources retain their normal AWS charges.
+
 ## Development deployment and changes
 
 Copy the example without committing the result:
