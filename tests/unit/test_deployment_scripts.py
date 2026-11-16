@@ -30,6 +30,9 @@ def test_lambda_release_requires_explicit_saved_plan_apply() -> None:
     assert "-auto-approve" not in source
     assert "terraform_plan_sha256" in source
     assert 'select(.change.actions | index("delete"))' in source
+    assert 'build_and_push nvd "$nvd_repository"' in source
+    assert "nvd_silver_lambda_image_uri" in source
+    assert 'for function_name in "$cisa_function" "$epss_function" "$nvd_function"' in source
 
 
 @pytest.mark.parametrize(

@@ -116,6 +116,27 @@ module "cisa_silver_runtime" {
   }
 }
 
+module "nvd_silver_runtime" {
+  source = "../../modules/nvd_silver_runtime"
+
+  name_prefix        = "threatflow-nvd-silver-dev"
+  image_uri          = var.nvd_silver_lambda_image_uri
+  aws_region         = var.aws_region
+  account_id         = data.aws_caller_identity.current.account_id
+  bronze_bucket_name = module.bronze_storage.bucket_name
+  bronze_bucket_arn  = module.bronze_storage.bucket_arn
+  bronze_prefix      = var.bronze_prefix
+  silver_bucket_name = module.silver_storage.bucket_name
+  silver_bucket_arn  = module.silver_storage.bucket_arn
+  silver_prefix      = var.silver_prefix
+  mapping_enabled    = var.nvd_silver_event_source_mapping_enabled
+
+  tags = {
+    Owner    = "capstone"
+    DataFlow = "nvd-bronze-to-silver"
+  }
+}
+
 module "epss_bronze_notification" {
   source = "../../modules/epss_bronze_notification"
 
@@ -123,6 +144,7 @@ module "epss_bronze_notification" {
   bronze_prefix      = var.bronze_prefix
   queue_arn          = module.epss_silver_queue.queue_arn
   cisa_queue_arn     = module.cisa_silver_runtime.queue_arn
+  nvd_queue_arn      = module.nvd_silver_runtime.queue_arn
 
   # S3 sends a destination-validation TestEvent when this resource is created.
   # Ensure the updated handler and active SQS mapping can acknowledge it first.
@@ -130,6 +152,7 @@ module "epss_bronze_notification" {
     module.epss_silver_queue,
     module.epss_silver_lambda,
     module.cisa_silver_runtime,
+    module.nvd_silver_runtime,
   ]
 }
 
@@ -146,6 +169,10 @@ module "pipeline_observability" {
   epss_queue_name     = module.epss_silver_queue.queue_name
   cisa_dlq_name       = module.cisa_silver_runtime.dlq_name
   epss_dlq_name       = module.epss_silver_queue.dlq_name
+  nvd_log_group_name  = module.nvd_silver_runtime.log_group_name
+  nvd_function_name   = module.nvd_silver_runtime.function_name
+  nvd_queue_name      = module.nvd_silver_runtime.queue_name
+  nvd_dlq_name        = module.nvd_silver_runtime.dlq_name
 
   tags = {
     Owner   = "capstone"

@@ -15,6 +15,13 @@ locals {
       queue_name    = var.epss_queue_name
       dlq_name      = var.epss_dlq_name
     }
+    nvd = {
+      label         = "NVD"
+      log_group     = var.nvd_log_group_name
+      function_name = var.nvd_function_name
+      queue_name    = var.nvd_queue_name
+      dlq_name      = var.nvd_dlq_name
+    }
   }
   audit_events = {
     bronze_received   = "BronzeReceived"
@@ -126,9 +133,9 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
       }],
       [for index, source_key in sort(keys(local.sources)) : {
         type   = "metric"
-        x      = index * 12
+        x      = index * 8
         y      = 4
-        width  = 12
+        width  = 8
         height = 6
         properties = {
           title  = "${local.sources[source_key].label}: flow and backlog"
@@ -149,9 +156,9 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
       }],
       [for index, source_key in sort(keys(local.sources)) : {
         type   = "log"
-        x      = index * 12
+        x      = index * 8
         y      = 10
-        width  = 12
+        width  = 8
         height = 8
         properties = {
           title  = "${local.sources[source_key].label}: latest object transitions"

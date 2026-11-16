@@ -129,19 +129,22 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
     class ReplicaStore:
         backend = "s3"
 
-        def store(self, source, content, acquired_at, extension, *, content_type=None):
+        def store(
+            self, source, content, acquired_at, extension, *, content_type=None, metadata=None
+        ):
             digest = sha256(content).hexdigest()
             return RawArtifactRef(
                 source=source,
                 sha256=digest,
-                uri=f"s3://bronze/bronze/source={source}/sha256={digest}.{extension}",
-                extension=extension,
+                uri=f"s3://bronze/bronze/source={source}/sha256={digest}.{extension.lstrip('.')}",
+                extension=extension.lstrip("."),
                 content_type=content_type,
                 size_bytes=len(content),
                 created=True,
                 backend="s3",
                 bucket="bronze",
-                object_key=f"bronze/source={source}/sha256={digest}.{extension}",
+                object_key=f"bronze/source={source}/sha256={digest}.{extension.lstrip('.')}",
+                version_id=f"version-{digest[:12]}",
             )
 
     monkeypatch.setattr(nvd_ingestion, "record_artifact", record)
@@ -156,6 +159,8 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
     assert result.pages_retrieved == 2 and result.total_records_received == 2
     assert result.unique_records_processed == 1
     assert result.rejected_count == 0
+    assert result.window_manifest_uri is not None
+    assert result.window_manifest_version_id is not None
     assert len(recorded_locations) == 2
     assert all(location.backend == "s3" for location in recorded_locations)
 

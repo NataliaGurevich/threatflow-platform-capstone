@@ -21,4 +21,15 @@ resource "aws_s3_bucket_notification" "this" {
       filter_suffix = ".json"
     }
   }
+
+  dynamic "queue" {
+    for_each = var.nvd_queue_arn == null ? [] : [var.nvd_queue_arn]
+    content {
+      id            = "nvd-window-committed"
+      queue_arn     = queue.value
+      events        = ["s3:ObjectCreated:*"]
+      filter_prefix = "${var.bronze_prefix}/source%3Dnvd/"
+      filter_suffix = ".window.json"
+    }
+  }
 }

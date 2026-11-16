@@ -20,6 +20,10 @@ from threatflow.raw_storage import (
 )
 from threatflow.repository.nvd_repository import upsert_records
 from threatflow.repository.raw_artifact_repository import record_artifact
+from threatflow.transformation.nvd_window import (
+    build_nvd_window_manifest,
+    publish_nvd_window_manifest,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +42,9 @@ class NvdIngestionResult:
     inserted_records: int
     updated_records: int
     rejected_count: int
+    window_manifest_uri: str | None = None
+    window_manifest_sha256: str | None = None
+    window_manifest_version_id: str | None = None
 
 
 def _deduplicate(records: list[dict]) -> list[dict]:
@@ -153,6 +160,24 @@ def ingest_nvd_cves(
         if replica_store is not None
         else [None] * len(artifact_pages)
     )
+    s3_pages = [
+        (replica or artifact, page_start_index, record_count)
+        for (artifact, page_start_index, record_count), replica in zip(
+            artifact_pages, replicas, strict=True
+        )
+    ]
+    window_store = raw_store if raw_store.backend == "s3" else replica_store
+    window_artifact = None
+    if window_store is not None:
+        window_manifest = build_nvd_window_manifest(
+            mode=mode,
+            requested_start=start,
+            requested_end=end,
+            acquired_at=acquired_at,
+            total_results=expected_total or 0,
+            pages=s3_pages,
+        )
+        window_artifact = publish_nvd_window_manifest(window_store, window_manifest)
     engine = create_engine(settings.database_url)
     try:
         with engine.begin() as connection:
@@ -191,6 +216,9 @@ def ingest_nvd_cves(
         inserted,
         updated,
         0,
+        window_artifact.uri if window_artifact is not None else None,
+        window_artifact.sha256 if window_artifact is not None else None,
+        window_artifact.version_id if window_artifact is not None else None,
     )
     LOGGER.info("NVD ingestion finished", extra=asdict(result))
     return result

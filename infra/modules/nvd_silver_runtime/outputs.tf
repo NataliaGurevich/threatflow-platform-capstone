@@ -1,0 +1,10 @@
+output "queue_arn" { value = aws_sqs_queue.events.arn }
+output "queue_name" { value = aws_sqs_queue.events.name }
+output "queue_url" { value = aws_sqs_queue.events.url }
+output "dlq_arn" { value = aws_sqs_queue.dlq.arn }
+output "dlq_name" { value = aws_sqs_queue.dlq.name }
+output "dlq_url" { value = aws_sqs_queue.dlq.url }
+output "function_name" { value = aws_lambda_function.this.function_name }
+output "log_group_name" { value = aws_cloudwatch_log_group.this.name }
+output "repository_name" { value = aws_ecr_repository.this.name }
+output "repository_url" { value = aws_ecr_repository.this.repository_url }

@@ -16,6 +16,10 @@ variable "cisa_queue_name" { type = string }
 variable "epss_queue_name" { type = string }
 variable "cisa_dlq_name" { type = string }
 variable "epss_dlq_name" { type = string }
+variable "nvd_log_group_name" { type = string }
+variable "nvd_function_name" { type = string }
+variable "nvd_queue_name" { type = string }
+variable "nvd_dlq_name" { type = string }
 
 variable "queue_age_threshold_seconds" {
   type        = number

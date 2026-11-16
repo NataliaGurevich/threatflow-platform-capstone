@@ -6,7 +6,7 @@ Silver datasets. A third module defines the Standard queue and DLQ that decouple
 from the EPSS transformation Lambda. A fourth module creates the private ECR repository for its
 container image. A fifth module creates the image-based ARM64 Lambda, its dedicated execution role,
 and a bounded CloudWatch log group. A sixth module configures the filtered Bronze-to-SQS event
-notification. The pipeline observability module combines CISA and EPSS health, audit events,
+notification. The pipeline observability module combines NVD, CISA, and EPSS health, audit events,
 queues, and alarms in one CloudWatch dashboard. The Bronze module also exposes a
 least-privilege ingestion policy that the development root can attach to the dedicated local
 Airflow identity.
@@ -44,8 +44,10 @@ Bronze retains noncurrent versions for 90 days by default and exposes ingestion 
 access only under `bronze/*`, without object deletion. The Lambda role is narrower: it can only
 read exact object versions under `bronze/source=epss/*`. Silver retains noncurrent versions for 30
 days by default and publishes committed datasets under `silver/*`; the Lambda can only read and
-write `silver/epss_scores/*`. A bucket-level `ListBucket` grant is conditionally restricted to that
-same dataset prefix; it lets a missing commit manifest return `NoSuchKey` without exposing other
+write `silver/epss_scores/*`. NVD has a separate role restricted to exact versions under
+`bronze/source=nvd/*`, immutable writes under `silver/nvd_cve_windows/*`, its own queue, and its
+own log group. A bucket-level `ListBucket` grant is conditionally restricted to each dataset
+prefix; it lets a missing commit manifest return `NoSuchKey` without exposing other
 prefixes. Lambda receives no unrestricted bucket listing, object deletion, KMS, or PostgreSQL
 access. It additionally receives `ReceiveMessage`, `DeleteMessage`, and `GetQueueAttributes` only
 for the dedicated EPSS event queue; no queue wildcard is used.
@@ -68,8 +70,9 @@ The SQS-to-Lambda event-source mapping is enabled with one message per invocatio
 failure reporting, no batching delay, and maximum concurrency of two. Lambda long-polls the queue
 and deletes a message only after the handler reports success; repeated deliveries remain safe
 because the Silver writer is idempotent. The S3 notification publishes `ObjectCreated` events only
-for keys with prefix `bronze/source=epss/` and suffix `.csv.gz`; CISA, NVD, Silver objects, and
-unrelated files do not match. Existing Bronze objects are not replayed when the notification is
+for keys with prefix `bronze/source=epss/` and suffix `.csv.gz`. NVD notifications match only
+`.window.json` commit markers; individual NVD page JSON and unrelated files do not match. Existing
+Bronze objects are not replayed when the notification is
 created. S3's destination-validation `s3:TestEvent` is acknowledged only for the configured Bronze
 bucket. The notification resource manages the bucket's complete notification configuration, so
 future destinations must be added to the same Terraform resource instead of creating a competing

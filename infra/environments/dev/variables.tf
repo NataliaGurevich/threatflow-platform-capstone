@@ -171,6 +171,21 @@ variable "cisa_minimum_previous_ratio" {
   default     = 0.8
 }
 
+variable "nvd_silver_lambda_image_uri" {
+  description = "Immutable NVD Silver Lambda image URI addressed by digest."
+  type        = string
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.nvd_silver_lambda_image_uri))
+    error_message = "nvd_silver_lambda_image_uri must end in @sha256:<64 lowercase hex characters>."
+  }
+}
+
+variable "nvd_silver_event_source_mapping_enabled" {
+  description = "Enable Lambda polling of the NVD committed-window queue."
+  type        = bool
+  default     = false
+}
+
 variable "create_airflow_local_identity" {
   description = "Create the local-only IAM user used by Airflow through temporary aws login credentials."
   type        = bool

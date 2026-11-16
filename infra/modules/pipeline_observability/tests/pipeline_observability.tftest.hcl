@@ -17,14 +17,18 @@ variables {
   epss_queue_name     = "threatflow-epss-events-test"
   cisa_dlq_name       = "threatflow-cisa-events-dlq-test"
   epss_dlq_name       = "threatflow-epss-events-dlq-test"
+  nvd_log_group_name  = "/aws/lambda/threatflow-nvd-silver-test"
+  nvd_function_name   = "threatflow-nvd-silver-test"
+  nvd_queue_name      = "threatflow-nvd-events-test"
+  nvd_dlq_name        = "threatflow-nvd-events-dlq-test"
 }
 
 run "creates_bounded_pipeline_observability" {
   command = apply
 
   assert {
-    condition     = length(aws_cloudwatch_log_metric_filter.audit) == 8
-    error_message = "CISA and EPSS must each emit received, committed, reused, and failed metrics."
+    condition     = length(aws_cloudwatch_log_metric_filter.audit) == 12
+    error_message = "NVD, CISA, and EPSS must each emit received, committed, reused, and failed metrics."
   }
 
   assert {
@@ -34,6 +38,8 @@ run "creates_bounded_pipeline_observability" {
       one(aws_cloudwatch_log_metric_filter.audit["cisa_silver_reused"].metric_transformation).name == "CISASilverReused" &&
       aws_cloudwatch_log_metric_filter.audit["epss_processing_failed"].log_group_name == var.epss_log_group_name &&
       one(aws_cloudwatch_log_metric_filter.audit["epss_processing_failed"].metric_transformation).name == "EPSSProcessingFailed"
+      && aws_cloudwatch_log_metric_filter.audit["nvd_bronze_received"].log_group_name == var.nvd_log_group_name
+      && one(aws_cloudwatch_log_metric_filter.audit["nvd_silver_committed"].metric_transformation).name == "NVDSilverCommitted"
     )
     error_message = "Metric filters must bind each audit event to its source Lambda log group."
   }
@@ -59,8 +65,17 @@ run "creates_bounded_pipeline_observability" {
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "Bronze to Silver health") &&
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.cisa_log_group_name) &&
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.epss_log_group_name) &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.nvd_log_group_name) &&
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "pipeline_event")
     )
     error_message = "The dashboard must combine alarms, source metrics, and recent structured transitions."
+  }
+
+  assert {
+    condition = alltrue([
+      for widget in jsondecode(aws_cloudwatch_dashboard.pipeline.dashboard_body).widgets :
+      widget.x >= 0 && widget.x <= 23 && widget.x + widget.width <= 24
+    ])
+    error_message = "Every dashboard widget must fit inside CloudWatch's 24-column grid."
   }
 }

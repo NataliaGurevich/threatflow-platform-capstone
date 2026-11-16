@@ -35,3 +35,10 @@ variable "cisa_queue_arn" {
   default     = null
   nullable    = true
 }
+
+variable "nvd_queue_arn" {
+  description = "ARN of the Standard SQS queue receiving committed NVD window events."
+  type        = string
+  default     = null
+  nullable    = true
+}

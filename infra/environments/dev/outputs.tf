@@ -109,8 +109,24 @@ output "cisa_silver_lambda_function_name" {
   value = module.cisa_silver_runtime.function_name
 }
 
+output "nvd_silver_queue_url" {
+  value = module.nvd_silver_runtime.queue_url
+}
+
+output "nvd_silver_dlq_url" {
+  value = module.nvd_silver_runtime.dlq_url
+}
+
+output "nvd_silver_image_repository_url" {
+  value = module.nvd_silver_runtime.repository_url
+}
+
+output "nvd_silver_lambda_function_name" {
+  value = module.nvd_silver_runtime.function_name
+}
+
 output "pipeline_dashboard_name" {
-  description = "CloudWatch dashboard for CISA and EPSS Bronze-to-Silver processing."
+  description = "CloudWatch dashboard for NVD, CISA, and EPSS Bronze-to-Silver processing."
   value       = module.pipeline_observability.dashboard_name
 }
 

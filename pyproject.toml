@@ -26,6 +26,9 @@ threatflow-build-epss-silver = "threatflow.transformation.epss_silver:main"
 threatflow-bootstrap-epss-silver = "threatflow.transformation.epss_silver_bootstrap:main"
 threatflow-bootstrap-cisa-silver = "threatflow.transformation.cisa_silver_bootstrap:main"
 threatflow-publish-cisa-silver = "threatflow.transformation.cisa_silver_publish:main"
+threatflow-reconcile-nvd-silver = "threatflow.transformation.nvd_silver_reconciliation:main"
+threatflow-bootstrap-nvd-silver = "threatflow.transformation.nvd_silver_bootstrap:main"
+threatflow-publish-nvd-silver = "threatflow.transformation.nvd_silver_publish:main"
 
 [dependency-groups]
 dev = [

@@ -13,10 +13,15 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from threatflow.config import Settings
 
-_SOURCE_EXTENSIONS = {"cisa_kev": {"json"}, "nvd": {"json"}, "epss": {"csv", "csv.gz"}}
+_SOURCE_EXTENSIONS = {
+    "cisa_kev": {"json"},
+    "nvd": {"json", "window.json"},
+    "epss": {"csv", "csv.gz"},
+}
 _SAFE_SOURCE = re.compile(r"^[a-z][a-z0-9_]*$")
 _CONTENT_TYPES = {
     "json": "application/json",
+    "window.json": "application/json",
     "csv": "text/csv",
     "csv.gz": "application/gzip",
 }

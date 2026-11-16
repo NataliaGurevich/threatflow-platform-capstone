@@ -25,6 +25,7 @@ The capstone evidence is organised here:
 - [Implemented and target architecture](docs/data-pipeline-treatflow.md)
 - [S3 Bronze storage decision](docs/adr/0001-s3-bronze-storage.md)
 - [EPSS event-driven Silver decision](docs/adr/0002-epss-event-driven-silver.md)
+- [NVD committed-window Silver decision](docs/adr/0003-nvd-committed-window-silver.md)
 - [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
@@ -209,6 +210,92 @@ destination-validation `s3:TestEvent` only when it names the configured Bronze b
 PostgreSQL-based
 `epss_silver_request` resolver remains useful for local audit and manual lineage inspection, but
 it is not part of the automatic AWS event path.
+
+## NVD committed windows and Silver Parquet
+
+NVD differs from the single-object CISA and EPSS feeds: one `published` or `modified` API window
+can span several immutable Bronze page objects. Individual pages are not transformation commits.
+After every page has passed pagination, count, parsing, and duplicate validation, ingestion writes
+one content-addressed `.window.json` Bronze object. It records the mode, exact UTC boundaries,
+`totalResults`, and the ordered SHA-256, key, VersionId, size, start index, and record count of every
+page. If ingestion fails before the final page, the diagnostic pages remain in Bronze but no
+window commit exists and no Silver work is triggered.
+
+The NVD S3 notification matches only `bronze/source=nvd/*.window.json`. Its dedicated Standard SQS
+queue and DLQ invoke an image Lambda that reads the manifest and every page by exact VersionId,
+revalidates checksums and pagination, preserves source `lastModified`, and publishes:
+
+```text
+silver/nvd_cve_windows/mode=modified/window_end=YYYY-MM-DDTHH-MM-SSZ/
+  window_id=<bronze-window-sha256>/
+    nvd_cves.parquet
+    _manifest.json
+```
+
+`published` and `modified` windows remain distinct. Parquet is written first and `_manifest.json`
+last; replay verifies and reuses the committed window. Each row retains the window SHA plus the
+exact Bronze page SHA and VersionId. Overlapping recovery windows are expected; downstream
+current-state selection must use the greatest NVD `lastModified`, not acquisition order.
+
+Find committed Bronze windows whose Silver commit is missing without writing:
+
+```bash
+uv run threatflow-reconcile-nvd-silver --dry-run \
+  --bronze-bucket <bronze-bucket> --silver-bucket <silver-bucket> \
+  --region eu-central-1
+```
+
+After review, `--apply --queue-url <nvd-queue-url>` enqueues only missing exact-version windows.
+The command never rebuilds a window from orphan page objects: a missing window commit means the
+source ingestion must be safely retried.
+
+Existing local NVD JSON pages can be converted without uploading Bronze files or invoking Lambda.
+The bootstrap reads their request and pagination lineage from PostgreSQL `raw_artifacts`, verifies
+every local file's size and SHA-256, reconstructs only complete exact request windows, and writes
+the same typed Parquet contract under `data/silver`:
+
+```bash
+# Read-only inventory and validation; creates neither files nor an AWS client.
+uv run threatflow-bootstrap-nvd-silver --dry-run --mode published \
+  --start-date 2022-01-01 --end-date 2026-11-16
+
+# Build three windows first, inspect them, then resume the complete range.
+uv run threatflow-bootstrap-nvd-silver --apply --mode published \
+  --start-date 2022-01-01 --end-date 2026-11-16 --limit 3
+uv run threatflow-bootstrap-nvd-silver --apply --mode published \
+  --start-date 2022-01-01 --end-date 2026-11-16
+```
+
+`--start-date` and `--end-date` select windows overlapping an inclusive UTC calendar range.
+Published and modified windows are never mixed. A local source is recorded honestly as local
+lineage and does not receive a fabricated S3 VersionId. Each `_manifest.json` is written last and
+acts as a resumable checkpoint; a replay verifies and reuses a completed partition. Missing,
+corrupt, conflicting, or incomplete page sets fail closed.
+
+Publish only those fully committed local NVD Silver partitions after reviewing a dry-run:
+
+```bash
+THREATFLOW_S3_SILVER_BUCKET=<silver-bucket> \
+THREATFLOW_AWS_REGION=eu-central-1 \
+uv run threatflow-publish-nvd-silver --dry-run --limit 3
+
+THREATFLOW_S3_SILVER_BUCKET=<silver-bucket> \
+THREATFLOW_AWS_REGION=eu-central-1 \
+uv run threatflow-publish-nvd-silver --apply --limit 3
+```
+
+The publisher re-verifies each local manifest and Parquet checksum. It writes Parquet first and
+the manifest last with conditional immutable S3 writes; identical retries are reused and a
+conflict fails. This bypasses Bronze notifications and Lambda, so the JSON pages do not need to be
+uploaded. The caller needs narrowly scoped read/write access under
+`silver/nvd_cve_windows/*`. Omit `--limit` only after the sample upload is verified.
+
+Choosing a five-year subset is a data-product decision, not an implementation limit. Prefer the
+most recent five calendar years for a current vulnerability-analysis dataset, while retaining all
+local Raw JSON as the replay/audit layer. Before building that subset, run the dry-run inventory:
+it cannot manufacture years absent from local Raw storage. Backfill missing `published` windows
+locally first, with S3 replication disabled, then rerun the bootstrap. `modified` windows are a
+separate change stream and do not replace missing published history.
 
 ## CISA Silver snapshots (local bootstrap slice)
 

@@ -18,14 +18,16 @@ aws_profile="${AWS_PROFILE:-threatflow-deploy}"
 registry="${expected_account}.dkr.ecr.${aws_region}.amazonaws.com"
 cisa_repository="threatflow-cisa-silver-dev"
 epss_repository="threatflow/epss-silver"
+nvd_repository="threatflow-nvd-silver-dev"
 cisa_function="threatflow-cisa-silver-dev"
 epss_function="threatflow-epss-silver-dev"
+nvd_function="threatflow-nvd-silver-dev"
 
 usage() {
   cat <<'EOF'
 Usage: scripts/release-aws-lambdas.sh plan|apply|verify [--skip-tests]
 
-  plan    Test, build, smoke-test, push immutable CISA/EPSS images, write local
+  plan    Test, build, smoke-test, push immutable NVD/CISA/EPSS images, write local
           auto-tfvars, and create a saved Terraform plan. This changes ECR only.
   apply   Verify the saved plan checksum, apply that exact plan, and verify AWS.
   verify  Compare Terraform image overrides with deployed Lambda resolved digests.
@@ -98,11 +100,13 @@ verify_deployment() {
     exit 1
   fi
 
-  local expected_cisa expected_epss actual_cisa actual_epss
+  local expected_cisa expected_epss expected_nvd actual_cisa actual_epss actual_nvd
   expected_cisa="$(jq -er '.cisa_silver_lambda_image_uri' "$overrides_file")"
   expected_epss="$(jq -er '.epss_silver_lambda_image_uri' "$overrides_file")"
+  expected_nvd="$(jq -er '.nvd_silver_lambda_image_uri' "$overrides_file")"
   actual_cisa="$(resolved_image_uri "$cisa_function")"
   actual_epss="$(resolved_image_uri "$epss_function")"
+  actual_nvd="$(resolved_image_uri "$nvd_function")"
 
   [[ "$actual_cisa" == "$expected_cisa" ]] || {
     echo "error: CISA Lambda digest mismatch" >&2
@@ -116,8 +120,14 @@ verify_deployment() {
     echo "actual:   ${actual_epss}" >&2
     exit 1
   }
+  [[ "$actual_nvd" == "$expected_nvd" ]] || {
+    echo "error: NVD Lambda digest mismatch" >&2
+    echo "expected: ${expected_nvd}" >&2
+    echo "actual:   ${actual_nvd}" >&2
+    exit 1
+  }
 
-  for function_name in "$cisa_function" "$epss_function"; do
+  for function_name in "$cisa_function" "$epss_function" "$nvd_function"; do
     status="$("${aws_cli[@]}" lambda get-function \
       --function-name "$function_name" \
       --query '[Configuration.State,Configuration.LastUpdateStatus]' \
@@ -171,6 +181,10 @@ if [[ "$action" == "apply" ]]; then
   }
   [[ "$(jq -er '.epss_silver_lambda_image_uri' "$overrides_file")" == "$(jq -er '.epss_image_uri' "$manifest_file")" ]] || {
     echo "error: EPSS image override changed after the saved plan was created" >&2
+    exit 1
+  }
+  [[ "$(jq -er '.nvd_silver_lambda_image_uri' "$overrides_file")" == "$(jq -er '.nvd_image_uri' "$manifest_file")" ]] || {
+    echo "error: NVD image override changed after the saved plan was created" >&2
     exit 1
   }
   terraform -chdir="$environment_dir" apply "$plan_name"
@@ -231,13 +245,16 @@ build_and_push() {
 
 cisa_digest="$(build_and_push cisa "$cisa_repository" | tee /dev/stderr | tail -n 1)"
 epss_digest="$(build_and_push epss "$epss_repository" | tee /dev/stderr | tail -n 1)"
+nvd_digest="$(build_and_push nvd "$nvd_repository" | tee /dev/stderr | tail -n 1)"
 
 digest_pattern='^sha256:[0-9a-f]{64}$'
 [[ "$cisa_digest" =~ $digest_pattern ]] || { echo "error: invalid CISA digest: ${cisa_digest}" >&2; exit 1; }
 [[ "$epss_digest" =~ $digest_pattern ]] || { echo "error: invalid EPSS digest: ${epss_digest}" >&2; exit 1; }
+[[ "$nvd_digest" =~ $digest_pattern ]] || { echo "error: invalid NVD digest: ${nvd_digest}" >&2; exit 1; }
 
 cisa_image_uri="${registry}/${cisa_repository}@${cisa_digest}"
 epss_image_uri="${registry}/${epss_repository}@${epss_digest}"
+nvd_image_uri="${registry}/${nvd_repository}@${nvd_digest}"
 
 temporary_overrides="${overrides_file}.tmp"
 temporary_manifest="${manifest_file}.tmp"
@@ -246,7 +263,8 @@ trap 'rm -f "$temporary_overrides" "$temporary_manifest"' EXIT HUP INT TERM
 jq -n \
   --arg cisa "$cisa_image_uri" \
   --arg epss "$epss_image_uri" \
-  '{cisa_silver_lambda_image_uri:$cisa,epss_silver_lambda_image_uri:$epss}' \
+  --arg nvd "$nvd_image_uri" \
+  '{cisa_silver_lambda_image_uri:$cisa,epss_silver_lambda_image_uri:$epss,nvd_silver_lambda_image_uri:$nvd}' \
   >"$temporary_overrides"
 mv "$temporary_overrides" "$overrides_file"
 
@@ -276,9 +294,10 @@ jq -n \
   --arg image_tag "$image_tag" \
   --arg cisa_image_uri "$cisa_image_uri" \
   --arg epss_image_uri "$epss_image_uri" \
+  --arg nvd_image_uri "$nvd_image_uri" \
   --arg terraform_plan_sha256 "$plan_sha" \
   --argjson working_tree_dirty "$dirty" \
-  '{created_at:$created_at,git_commit:$git_commit,working_tree_dirty:$working_tree_dirty,image_tag:$image_tag,cisa_image_uri:$cisa_image_uri,epss_image_uri:$epss_image_uri,terraform_plan_sha256:$terraform_plan_sha256}' \
+  '{created_at:$created_at,git_commit:$git_commit,working_tree_dirty:$working_tree_dirty,image_tag:$image_tag,cisa_image_uri:$cisa_image_uri,epss_image_uri:$epss_image_uri,nvd_image_uri:$nvd_image_uri,terraform_plan_sha256:$terraform_plan_sha256}' \
   >"$temporary_manifest"
 mv "$temporary_manifest" "$manifest_file"
 
@@ -287,5 +306,6 @@ echo "Saved Terraform plan: ${plan_file}"
 echo "Release manifest:     ${manifest_file}"
 echo "CISA image:           ${cisa_image_uri}"
 echo "EPSS image:           ${epss_image_uri}"
+echo "NVD image:            ${nvd_image_uri}"
 echo "Review with: terraform -chdir=${environment_dir} show ${plan_name}"
 echo "Apply with:  scripts/release-aws-lambdas.sh apply"

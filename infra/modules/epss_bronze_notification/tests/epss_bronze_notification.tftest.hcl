@@ -49,3 +49,20 @@ run "preserves_epss_and_adds_filtered_cisa_notification" {
     error_message = "The shared bucket notification must preserve EPSS and add filtered CISA events."
   }
 }
+
+run "adds_only_committed_nvd_window_notifications" {
+  command = apply
+
+  variables {
+    nvd_queue_arn = "arn:aws:sqs:eu-central-1:123456789012:threatflow-nvd-events-test"
+  }
+
+  assert {
+    condition = (
+      length(aws_s3_bucket_notification.this.queue) == 2 &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "nvd-window-committed"]).filter_prefix == "bronze/source%3Dnvd/" &&
+      one([for queue in aws_s3_bucket_notification.this.queue : queue if queue.id == "nvd-window-committed"]).filter_suffix == ".window.json"
+    )
+    error_message = "NVD notification must target only committed window manifests, not page JSON."
+  }
+}
