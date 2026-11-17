@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -38,6 +39,22 @@ def test_parser_allows_optional_metrics_and_projects_fields():
     assert rows[0]["cvss_score"] is None
     assert rows[0]["cwe_ids"] is None
     assert rows[0]["references"] is None
+
+
+def test_logs_response_fields_and_accepted_schema_drift(caplog):
+    record = cve()
+    record["cve"]["newSourceField"] = "value"
+    value = json.loads(payload(records=[record]))
+    value["newResponseField"] = "value"
+
+    with caplog.at_level(logging.INFO):
+        _, rows = parse_response(json.dumps(value).encode())
+
+    assert len(rows) == 1
+    assert "source=nvd scope=response status=accepted_with_drift" in caplog.text
+    assert "unexpected_fields=newResponseField" in caplog.text
+    assert "source=nvd scope=cve status=accepted_with_drift" in caplog.text
+    assert "unexpected_fields=newSourceField" in caplog.text
 
 
 def test_parser_treats_nvd_offsetless_response_timestamps_as_utc():

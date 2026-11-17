@@ -1,4 +1,5 @@
 import gzip
+import logging
 from datetime import date
 
 import pytest
@@ -50,6 +51,20 @@ def test_legacy_dataset_derives_percentiles_with_equal_scores_tied():
     )
 
     assert [row["percentile"] for row in rows] == [pytest.approx(1 / 3), 1.0, 1.0]
+
+
+def test_logs_source_columns_and_accepted_schema_drift(caplog):
+    with caplog.at_level(logging.INFO):
+        rows = parse_dataset(
+            gz("cve,epss,percentile,new_field\nCVE-2024-1234,0.1,0.2,value\n"),
+            date(2024, 1, 1),
+        )
+
+    assert len(rows) == 1
+    assert "stage=source_schema source=epss scope=csv_header" in caplog.text
+    assert "status=accepted_with_drift" in caplog.text
+    assert "unexpected_fields=new_field" in caplog.text
+    assert "projected_fields=cve_id,epss_score,percentile,score_date" in caplog.text
 
 
 def test_reject_invalid_or_duplicate_rows():

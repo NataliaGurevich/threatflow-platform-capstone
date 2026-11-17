@@ -2,12 +2,20 @@
 
 import csv
 import gzip
+import logging
 import re
 from bisect import bisect_right
 from datetime import date
 
+from threatflow.ingestion.schema_observability import log_source_schema
+
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 _SCORE_DATE = re.compile(r"score_date:(\d{4}-\d{2}-\d{2})")
+LOGGER = logging.getLogger(__name__)
+
+_REQUIRED_SOURCE_FIELDS = {"cve", "epss"}
+_OPTIONAL_SOURCE_FIELDS = {"percentile"}
+_PROJECTED_FIELDS = {"cve_id", "score_date", "epss_score", "percentile"}
 
 
 def extract_score_date(content: bytes) -> date:
@@ -37,6 +45,15 @@ def parse_dataset(content: bytes, score_date: date) -> list[dict]:
     if not lines:
         raise ValueError("empty EPSS dataset")
     reader = csv.DictReader(lines)
+    log_source_schema(
+        LOGGER,
+        source="epss",
+        scope="csv_header",
+        actual_fields=reader.fieldnames or (),
+        required_fields=_REQUIRED_SOURCE_FIELDS,
+        optional_fields=_OPTIONAL_SOURCE_FIELDS,
+        projected_fields=_PROJECTED_FIELDS,
+    )
     if not reader.fieldnames or not {"cve", "epss"}.issubset(reader.fieldnames):
         raise ValueError("EPSS CSV missing required columns")
     if len(reader.fieldnames) != len(set(reader.fieldnames)):

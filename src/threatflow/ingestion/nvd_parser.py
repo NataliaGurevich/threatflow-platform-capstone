@@ -3,13 +3,43 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
 
+from threatflow.ingestion.schema_observability import log_source_schema
+
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 _METRIC_KEYS = ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
 _METRIC_VERSIONS = dict(zip(_METRIC_KEYS, ("4.0", "3.1", "3.0", "2.0"), strict=True))
+LOGGER = logging.getLogger(__name__)
+
+_RESPONSE_REQUIRED_FIELDS = {"startIndex", "resultsPerPage", "totalResults", "vulnerabilities"}
+_RESPONSE_OPTIONAL_FIELDS = {"format", "version", "timestamp"}
+_CVE_REQUIRED_FIELDS = {"id", "published", "lastModified", "descriptions"}
+_CVE_OPTIONAL_FIELDS = {
+    "sourceIdentifier",
+    "vulnStatus",
+    "cveTags",
+    "metrics",
+    "weaknesses",
+    "configurations",
+    "references",
+    "evaluatorComment",
+}
+_PROJECTED_FIELDS = {
+    "cve_id",
+    "description",
+    "published",
+    "last_modified",
+    "cvss_version",
+    "cvss_score",
+    "cvss_severity",
+    "cvss_vector",
+    "cwe_ids",
+    "references",
+}
 
 
 def _date(value: Any, field: str) -> datetime:
@@ -63,6 +93,14 @@ def parse_response(content: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]
         data = json.loads(content)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ValueError(f"invalid NVD JSON: {exc}") from exc
+    log_source_schema(
+        LOGGER,
+        source="nvd",
+        scope="response",
+        actual_fields=data.keys() if isinstance(data, dict) else (),
+        required_fields=_RESPONSE_REQUIRED_FIELDS,
+        optional_fields=_RESPONSE_OPTIONAL_FIELDS,
+    )
     if not isinstance(data, dict) or not all(
         k in data for k in ("startIndex", "resultsPerPage", "totalResults", "vulnerabilities")
     ):
@@ -74,6 +112,21 @@ def parse_response(content: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]
         raise ValueError("invalid NVD pagination values")
     if not isinstance(data["vulnerabilities"], list):
         raise ValueError("vulnerabilities must be a list")
+    cve_fields = {
+        field
+        for entry in data["vulnerabilities"]
+        if isinstance(entry, dict) and isinstance(entry.get("cve"), dict)
+        for field in entry["cve"]
+    }
+    log_source_schema(
+        LOGGER,
+        source="nvd",
+        scope="cve",
+        actual_fields=cve_fields,
+        required_fields=_CVE_REQUIRED_FIELDS,
+        optional_fields=_CVE_OPTIONAL_FIELDS,
+        projected_fields=_PROJECTED_FIELDS,
+    )
     records = []
     for entry in data["vulnerabilities"]:
         cve = entry.get("cve") if isinstance(entry, dict) else None

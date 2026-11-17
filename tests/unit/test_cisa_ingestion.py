@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date
 
 import httpx
@@ -32,6 +33,20 @@ def test_parser_and_empty_catalog():
 def test_declared_catalog_count():
     with pytest.raises(ValueError, match="count"):
         parse_catalog(json.dumps({"count": 2, "vulnerabilities": [RECORD]}).encode())
+
+
+def test_logs_catalog_fields_and_accepted_schema_drift(caplog):
+    record = {**RECORD, "newSourceField": "value"}
+    with caplog.at_level(logging.INFO):
+        parsed = parse_catalog(
+            json.dumps({"vulnerabilities": [record], "newCatalogField": "value"}).encode()
+        )
+
+    assert len(parsed) == 1
+    assert "source=cisa_kev scope=catalog status=accepted_with_drift" in caplog.text
+    assert "unexpected_fields=newCatalogField" in caplog.text
+    assert "source=cisa_kev scope=vulnerability status=accepted_with_drift" in caplog.text
+    assert "unexpected_fields=newSourceField" in caplog.text
 
 
 @pytest.mark.parametrize(

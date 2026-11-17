@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -10,7 +11,37 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from threatflow.ingestion.schema_observability import log_source_schema
+
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+LOGGER = logging.getLogger(__name__)
+
+_CATALOG_REQUIRED_FIELDS = {"vulnerabilities"}
+_CATALOG_OPTIONAL_FIELDS = {"catalogVersion", "count", "dateReleased", "title"}
+_VULNERABILITY_REQUIRED_FIELDS = {
+    "cveID",
+    "vendorProject",
+    "product",
+    "vulnerabilityName",
+    "dateAdded",
+    "shortDescription",
+    "requiredAction",
+    "dueDate",
+    "knownRansomwareCampaignUse",
+}
+_VULNERABILITY_OPTIONAL_FIELDS = {"notes", "cwes"}
+_PROJECTED_FIELDS = {
+    "cve_id",
+    "vendor_project",
+    "product",
+    "vulnerability_name",
+    "date_added",
+    "short_description",
+    "required_action",
+    "due_date",
+    "known_ransomware_campaign_use",
+    "notes",
+}
 
 
 class Vulnerability(BaseModel):
@@ -81,6 +112,31 @@ class ParsedCatalog:
 def parse_catalog_document(content: bytes) -> ParsedCatalog:
     try:
         value = json.loads(content)
+        catalog_fields = value.keys() if isinstance(value, dict) else ()
+        log_source_schema(
+            LOGGER,
+            source="cisa_kev",
+            scope="catalog",
+            actual_fields=catalog_fields,
+            required_fields=_CATALOG_REQUIRED_FIELDS,
+            optional_fields=_CATALOG_OPTIONAL_FIELDS,
+        )
+        vulnerabilities = value.get("vulnerabilities") if isinstance(value, dict) else None
+        vulnerability_fields = {
+            field
+            for record in vulnerabilities or ()
+            if isinstance(record, dict)
+            for field in record
+        }
+        log_source_schema(
+            LOGGER,
+            source="cisa_kev",
+            scope="vulnerability",
+            actual_fields=vulnerability_fields,
+            required_fields=_VULNERABILITY_REQUIRED_FIELDS,
+            optional_fields=_VULNERABILITY_OPTIONAL_FIELDS,
+            projected_fields=_PROJECTED_FIELDS,
+        )
         catalog = Catalog.model_validate(value)
     except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, TypeError) as exc:
         raise ValueError(f"invalid CISA KEV catalog: {exc}") from exc
