@@ -115,6 +115,8 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 resource "aws_cloudwatch_dashboard" "pipeline" {
   dashboard_name = "${var.name_prefix}-bronze-to-silver"
   dashboard_body = jsonencode({
+    start          = "-P7D"
+    periodOverride = "inherit"
     widgets = concat(
       [{
         type   = "alarm"
@@ -135,6 +137,28 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
         type   = "metric"
         x      = index * 8
         y      = 4
+        width  = 8
+        height = 3
+        properties = {
+          title                = "${local.sources[source_key].label}: events in selected range"
+          region               = var.aws_region
+          period               = 300
+          stat                 = "Sum"
+          view                 = "singleValue"
+          setPeriodToTimeRange = true
+          sparkline            = false
+          metrics = [
+            [local.namespace, "${local.sources[source_key].label}BronzeReceived", { label = "Bronze received" }],
+            [local.namespace, "${local.sources[source_key].label}SilverCommitted", { label = "Silver committed" }],
+            [local.namespace, "${local.sources[source_key].label}SilverReused", { label = "Silver reused" }],
+            [local.namespace, "${local.sources[source_key].label}ProcessingFailed", { label = "Failed" }]
+          ]
+        }
+      }],
+      [for index, source_key in sort(keys(local.sources)) : {
+        type   = "metric"
+        x      = index * 8
+        y      = 7
         width  = 8
         height = 6
         properties = {
@@ -157,7 +181,7 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
       [for index, source_key in sort(keys(local.sources)) : {
         type   = "log"
         x      = index * 8
-        y      = 10
+        y      = 13
         width  = 8
         height = 8
         properties = {

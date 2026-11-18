@@ -78,4 +78,19 @@ run "creates_bounded_pipeline_observability" {
     ])
     error_message = "Every dashboard widget must fit inside CloudWatch's 24-column grid."
   }
+
+  assert {
+    condition = (
+      jsondecode(aws_cloudwatch_dashboard.pipeline.dashboard_body).start == "-P7D" &&
+      length([
+        for widget in jsondecode(aws_cloudwatch_dashboard.pipeline.dashboard_body).widgets : widget
+        if widget.type == "metric" && widget.properties.view == "singleValue" && widget.properties.setPeriodToTimeRange
+      ]) == 3 &&
+      length([
+        for widget in jsondecode(aws_cloudwatch_dashboard.pipeline.dashboard_body).widgets : widget
+        if widget.type == "metric" && widget.properties.view == "timeSeries"
+      ]) == 3
+    )
+    error_message = "The dashboard must show weekly pipeline totals above historical flow and backlog charts."
+  }
 }
