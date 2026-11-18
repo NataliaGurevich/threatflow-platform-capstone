@@ -35,7 +35,10 @@ def test_declared_catalog_count():
         parse_catalog(json.dumps({"count": 2, "vulnerabilities": [RECORD]}).encode())
 
 
-def test_logs_catalog_fields_and_accepted_schema_drift(caplog):
+def test_logs_catalog_fields_and_accepted_schema_drift(caplog, monkeypatch):
+    monkeypatch.setattr(
+        logging.getLogger("threatflow.ingestion.cisa_parser"), "disabled", False
+    )
     record = {**RECORD, "newSourceField": "value"}
     with caplog.at_level(logging.INFO):
         parsed = parse_catalog(

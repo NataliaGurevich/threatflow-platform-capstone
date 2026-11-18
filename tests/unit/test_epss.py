@@ -53,7 +53,10 @@ def test_legacy_dataset_derives_percentiles_with_equal_scores_tied():
     assert [row["percentile"] for row in rows] == [pytest.approx(1 / 3), 1.0, 1.0]
 
 
-def test_logs_source_columns_and_accepted_schema_drift(caplog):
+def test_logs_source_columns_and_accepted_schema_drift(caplog, monkeypatch):
+    monkeypatch.setattr(
+        logging.getLogger("threatflow.ingestion.epss_parser"), "disabled", False
+    )
     with caplog.at_level(logging.INFO):
         rows = parse_dataset(
             gz("cve,epss,percentile,new_field\nCVE-2024-1234,0.1,0.2,value\n"),

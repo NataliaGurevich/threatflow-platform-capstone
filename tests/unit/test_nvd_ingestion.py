@@ -41,7 +41,10 @@ def test_parser_allows_optional_metrics_and_projects_fields():
     assert rows[0]["references"] is None
 
 
-def test_logs_response_fields_and_accepted_schema_drift(caplog):
+def test_logs_response_fields_and_accepted_schema_drift(caplog, monkeypatch):
+    monkeypatch.setattr(
+        logging.getLogger("threatflow.ingestion.nvd_parser"), "disabled", False
+    )
     record = cve()
     record["cve"]["newSourceField"] = "value"
     value = json.loads(payload(records=[record]))
