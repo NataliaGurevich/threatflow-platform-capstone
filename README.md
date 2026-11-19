@@ -26,6 +26,7 @@ The capstone evidence is organised here:
 - [S3 Bronze storage decision](docs/adr/0001-s3-bronze-storage.md)
 - [EPSS event-driven Silver decision](docs/adr/0002-epss-event-driven-silver.md)
 - [NVD committed-window Silver decision](docs/adr/0003-nvd-committed-window-silver.md)
+- [Glue Spark S3 Gold decision](docs/adr/0004-glue-spark-s3-gold.md)
 - [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
