@@ -1,6 +1,6 @@
 # ADR 0004: Build S3 Gold datasets with AWS Glue Spark
 
-- Status: Accepted; local transformation and publisher implemented, AWS runtime pending
+- Status: Accepted; local and manual AWS Glue runtime implemented, AWS deployment pending
 - Date: 2026-11-19
 
 ## Context

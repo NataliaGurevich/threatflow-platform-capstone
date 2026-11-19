@@ -27,6 +27,39 @@ The capstone evidence is organised here:
 - [EPSS event-driven Silver decision](docs/adr/0002-epss-event-driven-silver.md)
 - [NVD committed-window Silver decision](docs/adr/0003-nvd-committed-window-silver.md)
 - [Glue Spark S3 Gold decision](docs/adr/0004-glue-spark-s3-gold.md)
+
+### Manual AWS Glue Gold smoke run
+
+The first Gold Glue runtime is intentionally deployed manually before Terraform automation. It
+uses `glue/vulnerability_priority_job.py` as the Glue script and the project wheel as
+`--extra-py-files`. The job resolves committed Silver manifests, builds and validates detail and
+summary Parquet, and writes the shared product commit last.
+
+Build the wheel and upload both immutable release artifacts:
+
+```bash
+uv build --wheel
+aws s3 cp dist/threatflow-0.1.0-py3-none-any.whl \
+  "s3://${THREATFLOW_SILVER_BUCKET}/${THREATFLOW_ARTIFACT_PREFIX}/"
+aws s3 cp glue/vulnerability_priority_job.py \
+  "s3://${THREATFLOW_SILVER_BUCKET}/${THREATFLOW_ARTIFACT_PREFIX}/"
+```
+
+Required application job parameters are:
+
+```text
+--silver_bucket
+--silver_prefix
+--gold_bucket
+--gold_prefix
+--snapshot_date
+--snapshot_type
+--nvd_history_complete
+```
+
+Until complete NVD historical coverage is proven, use `RECONSTRUCTED` and `false`. A successful
+run writes `gold/vulnerability_priority_daily`, `gold/vulnerability_priority_summary_daily`, and
+the final commit under `gold/_commits/vulnerability_priority`.
 - [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)

@@ -29,6 +29,7 @@ threatflow-publish-cisa-silver = "threatflow.transformation.cisa_silver_publish:
 threatflow-reconcile-nvd-silver = "threatflow.transformation.nvd_silver_reconciliation:main"
 threatflow-bootstrap-nvd-silver = "threatflow.transformation.nvd_silver_bootstrap:main"
 threatflow-publish-nvd-silver = "threatflow.transformation.nvd_silver_publish:main"
+threatflow-build-reconstructed-gold = "threatflow.gold.local_reconstructed:main"
 
 [dependency-groups]
 dev = [

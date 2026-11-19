@@ -57,6 +57,55 @@ class LocalGoldPublishResult:
     quality: GoldQualityReport
 
 
+def reuse_committed_vulnerability_priority_local(
+    *,
+    input_plan: Mapping[str, Any],
+    output_root: str | Path,
+    snapshot_date: date,
+    source_cutoff: datetime,
+    policy_version: str = POLICY_VERSION,
+) -> LocalGoldPublishResult | None:
+    """Verify and reuse a committed snapshot without rebuilding its Spark frames."""
+    fingerprint = canonical_input_fingerprint(
+        input_plan,
+        snapshot_date=snapshot_date,
+        source_cutoff=source_cutoff,
+        policy_version=policy_version,
+    )
+    root = Path(output_root)
+    run_id = f"run_id={fingerprint}"
+    date_partition = f"snapshot_date={snapshot_date.isoformat()}"
+    detail_path = root / DETAIL_DATASET / date_partition / run_id
+    summary_path = root / SUMMARY_DATASET / date_partition / run_id
+    product_commit_path = root / "_commits" / PRODUCT_NAME / date_partition / "_manifest.json"
+    if not product_commit_path.exists():
+        return None
+    commit = _read_json(product_commit_path, "product commit")
+    if commit.get("input_fingerprint") != fingerprint:
+        raise GoldPublishConflict(
+            f"Gold snapshot {snapshot_date} is already committed with fingerprint "
+            f"{commit.get('input_fingerprint')}"
+        )
+    _verify_committed_product(root, commit, detail_path, summary_path)
+    quality_data = commit.get("quality")
+    if not isinstance(quality_data, dict):
+        raise GoldPublishError("product commit has no quality report")
+    quality = GoldQualityReport(
+        detail_count=int(quality_data["detail_count"]),
+        summary_count=int(quality_data["summary_count"]),
+        tier_counts={str(k): int(v) for k, v in quality_data["tier_counts"].items()},
+    )
+    return LocalGoldPublishResult(
+        status="REUSED",
+        snapshot_date=snapshot_date,
+        input_fingerprint=fingerprint,
+        detail_path=str(detail_path),
+        summary_path=str(summary_path),
+        product_commit_path=str(product_commit_path),
+        quality=quality,
+    )
+
+
 def canonical_input_fingerprint(
     input_plan: Mapping[str, Any],
     *,
@@ -88,6 +137,8 @@ def publish_vulnerability_priority_local(
     source_cutoff: datetime,
     generated_at: datetime,
     policy_version: str = POLICY_VERSION,
+    snapshot_type: str = "OBSERVED",
+    nvd_history_complete: bool = True,
     dry_run: bool = False,
 ) -> LocalGoldPublishResult:
     """Validate and publish one immutable local Gold snapshot."""
@@ -108,6 +159,8 @@ def publish_vulnerability_priority_local(
         generated_at=generated_at,
         policy_version=policy_version,
         input_fingerprint=fingerprint,
+        snapshot_type=snapshot_type,
+        nvd_history_complete=nvd_history_complete,
     )
 
     root = Path(output_root)
@@ -153,6 +206,8 @@ def publish_vulnerability_priority_local(
         generated_at=generated_at,
         policy_version=policy_version,
         input_fingerprint=fingerprint,
+        snapshot_type=snapshot_type,
+        nvd_history_complete=nvd_history_complete,
     )
 
     detail_files = _parquet_inventory(detail_path)
@@ -169,6 +224,8 @@ def publish_vulnerability_priority_local(
         files=detail_files,
         input_plan=canonical_plan,
         tier_counts=quality.tier_counts,
+        snapshot_type=snapshot_type,
+        nvd_history_complete=nvd_history_complete,
     )
     summary_manifest = _dataset_manifest(
         dataset=SUMMARY_DATASET,
@@ -182,6 +239,8 @@ def publish_vulnerability_priority_local(
         input_plan=canonical_plan,
         detail_record_count=quality.detail_count,
         tier_counts=quality.tier_counts,
+        snapshot_type=snapshot_type,
+        nvd_history_complete=nvd_history_complete,
     )
     detail_manifest_path = detail_path / "_manifest.json"
     summary_manifest_path = summary_path / "_manifest.json"
@@ -194,6 +253,8 @@ def publish_vulnerability_priority_local(
         "gold_schema_version": GOLD_SCHEMA_VERSION,
         "policy_version": policy_version,
         "snapshot_date": snapshot_date.isoformat(),
+        "snapshot_type": snapshot_type,
+        "nvd_history_complete": nvd_history_complete,
         "source_cutoff": _utc_text(source_cutoff),
         "input_fingerprint": fingerprint,
         "status": "COMMITTED",
@@ -246,6 +307,8 @@ def _dataset_manifest(
     files: list[ParquetFile],
     input_plan: Any,
     tier_counts: dict[str, int],
+    snapshot_type: str,
+    nvd_history_complete: bool,
     detail_record_count: int | None = None,
 ) -> dict[str, Any]:
     manifest: dict[str, Any] = {
@@ -254,6 +317,8 @@ def _dataset_manifest(
         "schema_version": GOLD_SCHEMA_VERSION,
         "policy_version": policy_version,
         "snapshot_date": snapshot_date.isoformat(),
+        "snapshot_type": snapshot_type,
+        "nvd_history_complete": nvd_history_complete,
         "source_cutoff": _utc_text(source_cutoff),
         "input_fingerprint": fingerprint,
         "record_count": record_count,
@@ -384,6 +449,8 @@ def _assert_frame_identity(
     generated_at: datetime,
     policy_version: str,
     input_fingerprint: str,
+    snapshot_type: str,
+    nvd_history_complete: bool,
 ) -> datetime:
     for label, frame in (("detail", detail), ("summary", summary)):
         if label == "detail" and not frame.limit(1).count():
@@ -393,6 +460,8 @@ def _assert_frame_identity(
             | ~F.col("generated_at").eqNullSafe(F.lit(generated_at).cast("timestamp"))
             | ~F.col("policy_version").eqNullSafe(F.lit(policy_version))
             | ~F.col("input_fingerprint").eqNullSafe(F.lit(input_fingerprint))
+            | ~F.col("snapshot_type").eqNullSafe(F.lit(snapshot_type))
+            | ~F.col("nvd_history_complete").eqNullSafe(F.lit(nvd_history_complete))
         )
         if label == "detail":
             mismatch = mismatch | ~F.col("source_cutoff").eqNullSafe(

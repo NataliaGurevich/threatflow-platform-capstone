@@ -7,10 +7,16 @@ from dataclasses import dataclass
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from threatflow.gold.vulnerability_priority import ALLOWED_PRIORITY_TIERS, GOLD_SCHEMA_VERSION
+from threatflow.gold.vulnerability_priority import (
+    ALLOWED_PRIORITY_TIERS,
+    ALLOWED_SNAPSHOT_TYPES,
+    GOLD_SCHEMA_VERSION,
+)
 
 DETAIL_SCHEMA = (
     ("snapshot_date", "date"),
+    ("snapshot_type", "string"),
+    ("nvd_history_complete", "boolean"),
     ("source_cutoff", "timestamp"),
     ("cve_id", "string"),
     ("priority_tier", "string"),
@@ -38,6 +44,8 @@ DETAIL_SCHEMA = (
 )
 SUMMARY_SCHEMA = (
     ("snapshot_date", "date"),
+    ("snapshot_type", "string"),
+    ("nvd_history_complete", "boolean"),
     ("priority_tier", "string"),
     ("vulnerability_count", "bigint"),
     ("ransomware_count", "bigint"),
@@ -91,10 +99,15 @@ def validate_vulnerability_priority_gold(
         F.sum(
             F.when(~F.col("priority_tier").isin(*ALLOWED_PRIORITY_TIERS), 1).otherwise(0)
         ).alias("invalid_tier_count"),
+        F.sum(
+            F.when(~F.col("snapshot_type").isin(*ALLOWED_SNAPSHOT_TYPES), 1).otherwise(0)
+        ).alias("invalid_snapshot_type_count"),
         _invalid_probability_count("epss_score").alias("invalid_epss_score_count"),
         _invalid_probability_count("epss_percentile").alias("invalid_percentile_count"),
         _invalid_probability_count("epss_7d_ago").alias("invalid_epss_7d_ago_count"),
         F.countDistinct("snapshot_date").alias("snapshot_date_count"),
+        F.countDistinct("snapshot_type").alias("snapshot_type_count"),
+        F.countDistinct("nvd_history_complete").alias("nvd_history_complete_count"),
         F.countDistinct("source_cutoff").alias("source_cutoff_count"),
         F.countDistinct("generated_at").alias("generated_at_count"),
         F.countDistinct("policy_version").alias("policy_version_count"),
@@ -107,6 +120,7 @@ def validate_vulnerability_priority_gold(
         "null_reason_count": "detail has null priority reasons",
         "null_severity_count": "detail has null CVSS severities",
         "invalid_tier_count": "detail has invalid priority tiers",
+        "invalid_snapshot_type_count": "detail has invalid snapshot types",
         "invalid_epss_score_count": "detail has EPSS scores outside [0, 1]",
         "invalid_percentile_count": "detail has EPSS percentiles outside [0, 1]",
         "invalid_epss_7d_ago_count": "detail has prior EPSS scores outside [0, 1]",
@@ -117,6 +131,8 @@ def validate_vulnerability_priority_gold(
     if detail_metrics["row_count"] > 0:
         for metric, label in (
             ("snapshot_date_count", "snapshot_date"),
+            ("snapshot_type_count", "snapshot_type"),
+            ("nvd_history_complete_count", "nvd_history_complete"),
             ("source_cutoff_count", "source_cutoff"),
             ("generated_at_count", "generated_at"),
             ("policy_version_count", "policy_version"),
@@ -140,6 +156,9 @@ def validate_vulnerability_priority_gold(
             F.when(~F.col("priority_tier").isin(*ALLOWED_PRIORITY_TIERS), 1).otherwise(0)
         ).alias("invalid_tier_count"),
         F.sum(
+            F.when(~F.col("snapshot_type").isin(*ALLOWED_SNAPSHOT_TYPES), 1).otherwise(0)
+        ).alias("invalid_snapshot_type_count"),
+        F.sum(
             F.when(
                 (F.col("vulnerability_count") < 0)
                 | (F.col("ransomware_count") < 0)
@@ -149,6 +168,8 @@ def validate_vulnerability_priority_gold(
             ).otherwise(0)
         ).alias("negative_count_rows"),
         F.countDistinct("snapshot_date").alias("snapshot_date_count"),
+        F.countDistinct("snapshot_type").alias("snapshot_type_count"),
+        F.countDistinct("nvd_history_complete").alias("nvd_history_complete_count"),
         F.countDistinct("generated_at").alias("generated_at_count"),
         F.countDistinct("policy_version").alias("policy_version_count"),
         F.countDistinct("input_fingerprint").alias("fingerprint_count"),
@@ -162,10 +183,17 @@ def validate_vulnerability_priority_gold(
         issues.append(
             f"summary has invalid priority tiers: {summary_metrics['invalid_tier_count']}"
         )
+    if summary_metrics["invalid_snapshot_type_count"]:
+        issues.append(
+            "summary has invalid snapshot types: "
+            f"{summary_metrics['invalid_snapshot_type_count']}"
+        )
     if summary_metrics["negative_count_rows"]:
         issues.append(f"summary has negative counts: {summary_metrics['negative_count_rows']}")
     for metric, label in (
         ("snapshot_date_count", "snapshot_date"),
+        ("snapshot_type_count", "snapshot_type"),
+        ("nvd_history_complete_count", "nvd_history_complete"),
         ("generated_at_count", "generated_at"),
         ("policy_version_count", "policy_version"),
         ("fingerprint_count", "input_fingerprint"),
@@ -261,7 +289,7 @@ def _reconciliation_issues(detail: DataFrame, summary: DataFrame) -> list[str]:
         | ~F.col("critical_count").eqNullSafe(
             F.coalesce(F.col("expected_critical_count"), F.lit(0))
         )
-        | ~F.col("average_epss").eqNullSafe(F.col("expected_average_epss"))
+        | _float_differs("average_epss", "expected_average_epss")
         | ~F.col("maximum_epss").eqNullSafe(F.col("expected_maximum_epss"))
     )
     mismatched = comparison.select("priority_tier").limit(1).collect()
@@ -272,10 +300,20 @@ def _reconciliation_issues(detail: DataFrame, summary: DataFrame) -> list[str]:
         )
 
     detail_identity = detail.select(
-        "snapshot_date", "generated_at", "policy_version", "input_fingerprint"
+        "snapshot_date",
+        "snapshot_type",
+        "nvd_history_complete",
+        "generated_at",
+        "policy_version",
+        "input_fingerprint",
     ).distinct()
     summary_identity = summary.select(
-        "snapshot_date", "generated_at", "policy_version", "input_fingerprint"
+        "snapshot_date",
+        "snapshot_type",
+        "nvd_history_complete",
+        "generated_at",
+        "policy_version",
+        "input_fingerprint",
     ).distinct()
     if (
         detail_identity.limit(1).count()
@@ -283,3 +321,11 @@ def _reconciliation_issues(detail: DataFrame, summary: DataFrame) -> list[str]:
     ):
         issues.append("detail and summary publication identities differ")
     return issues
+
+
+def _float_differs(actual: str, expected: str, tolerance: float = 1e-12):
+    left = F.col(actual)
+    right = F.col(expected)
+    return (~left.eqNullSafe(right)) & (
+        left.isNull() | right.isNull() | (F.abs(left - right) > F.lit(tolerance))
+    )
