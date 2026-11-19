@@ -202,3 +202,57 @@ variable "airflow_local_user_name" {
     error_message = "airflow_local_user_name must be a valid IAM user name."
   }
 }
+
+variable "create_gold_daily_runtime" {
+  description = "Create a separate Terraform-managed daily Gold Glue runtime."
+  type        = bool
+  default     = false
+}
+
+variable "gold_bucket_name" {
+  description = "Existing S3 bucket receiving Gold datasets."
+  type        = string
+  default     = ""
+}
+
+variable "gold_prefix" {
+  description = "Key prefix reserved for Gold datasets and Glue temporary files."
+  type        = string
+  default     = "gold"
+}
+
+variable "gold_glue_script_s3_uri" {
+  description = "Immutable S3 URI of the daily Gold Glue entrypoint."
+  type        = string
+  default     = ""
+}
+
+variable "gold_glue_wheel_s3_uri" {
+  description = "Immutable S3 URI of the daily Gold ThreatFlow wheel."
+  type        = string
+  default     = ""
+}
+
+variable "gold_max_input_lag_days" {
+  description = "Maximum age of the AUTO-selected EPSS snapshot relative to yesterday UTC."
+  type        = number
+  default     = 2
+}
+
+variable "gold_schedule_expression" {
+  description = "EventBridge Scheduler expression for daily Gold creation."
+  type        = string
+  default     = "cron(0 9 * * ? *)"
+}
+
+variable "gold_schedule_timezone" {
+  description = "IANA timezone used by the Gold schedule."
+  type        = string
+  default     = "Europe/Berlin"
+}
+
+variable "gold_schedule_enabled" {
+  description = "Enable only after a successful manual AUTO Glue smoke test."
+  type        = bool
+  default     = false
+}

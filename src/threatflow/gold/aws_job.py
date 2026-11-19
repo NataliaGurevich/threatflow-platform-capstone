@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import boto3
@@ -36,16 +36,16 @@ def run_vulnerability_priority_gold_job(
     silver_prefix: str,
     gold_bucket: str,
     gold_prefix: str,
-    snapshot_date: date,
+    snapshot_date: date | None,
     snapshot_type: str,
     nvd_history_complete: bool,
+    max_input_lag_days: int = 2,
     aws_region: str | None = None,
     s3_client: Any | None = None,
 ) -> S3GoldPublishResult:
     """Resolve, transform, validate, and commit one S3 Gold date."""
     if snapshot_type == "OBSERVED" and not nvd_history_complete:
         raise ValueError("OBSERVED snapshots require nvd_history_complete=true")
-    source_cutoff = datetime.combine(snapshot_date, time.max, tzinfo=UTC)
     generated_at = datetime.now(UTC)
     client = s3_client or boto3.client(
         "s3",
@@ -53,6 +53,17 @@ def run_vulnerability_priority_gold_job(
         config=_BOTO_CONFIG,
     )
     resolver = S3SilverResolver(silver_bucket, silver_prefix, s3_client=client)
+    if snapshot_date is None:
+        snapshot_date = resolver.select_latest_ready_snapshot_date(
+            latest_allowed_date=generated_at.date() - timedelta(days=1),
+            max_input_lag_days=max_input_lag_days,
+        )
+        LOGGER.info(
+            "gold_auto_snapshot_selected snapshot_date=%s max_input_lag_days=%d",
+            snapshot_date,
+            max_input_lag_days,
+        )
+    source_cutoff = datetime.combine(snapshot_date, time.max, tzinfo=UTC)
     plan = resolver.resolve(
         snapshot_date,
         source_cutoff=source_cutoff,

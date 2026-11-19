@@ -179,3 +179,30 @@ module "pipeline_observability" {
     Purpose = "bronze-to-silver-observability"
   }
 }
+
+module "gold_runtime" {
+  count  = var.create_gold_daily_runtime ? 1 : 0
+  source = "../../modules/gold_runtime"
+
+  name_prefix          = "threatflow-vulnerability-priority-gold-dev"
+  aws_region           = var.aws_region
+  account_id           = data.aws_caller_identity.current.account_id
+  silver_bucket_name   = module.silver_storage.bucket_name
+  silver_bucket_arn    = module.silver_storage.bucket_arn
+  silver_prefix        = var.silver_prefix
+  gold_bucket_name     = var.gold_bucket_name
+  gold_prefix          = var.gold_prefix
+  script_s3_uri        = var.gold_glue_script_s3_uri
+  wheel_s3_uri         = var.gold_glue_wheel_s3_uri
+  snapshot_type        = "RECONSTRUCTED"
+  nvd_history_complete = false
+  max_input_lag_days   = var.gold_max_input_lag_days
+  schedule_expression  = var.gold_schedule_expression
+  schedule_timezone    = var.gold_schedule_timezone
+  schedule_enabled     = var.gold_schedule_enabled
+
+  tags = {
+    Owner    = "capstone"
+    DataFlow = "silver-to-gold"
+  }
+}

@@ -26,6 +26,7 @@ infra/
 ├── modules/epss_silver_lambda/   Lambda, execution role, and log group module
 ├── modules/epss_bronze_notification/ filtered S3-to-SQS notification module
 ├── modules/pipeline_observability/ CloudWatch dashboard, metrics, and alarms
+├── modules/gold_runtime/          daily AUTO Glue Gold job and Scheduler
 └── environments/dev/             development root module
 ```
 
@@ -119,9 +120,44 @@ terraform -chdir=infra/modules/epss_bronze_notification test
 
 terraform -chdir=infra/modules/pipeline_observability init -backend=false
 terraform -chdir=infra/modules/pipeline_observability test
+
+terraform -chdir=infra/modules/gold_runtime init -backend=false
+terraform -chdir=infra/modules/gold_runtime test
 ```
 
 The tests use a mocked AWS provider. They create no AWS resources and require no credentials.
+
+## Terraform-managed daily Gold runtime
+
+The optional `gold_runtime` module creates a new Glue Job rather than importing or changing the
+manual diagnostic Job. Its EventBridge Scheduler invokes `glue:StartJobRun` every day at 09:00 in
+`Europe/Berlin` and passes `--snapshot_date=AUTO`. AUTO selects the newest committed EPSS pair
+`D` and `D-7` no later than yesterday UTC, then the normal resolver validates those Parquet files
+and all selected CISA/NVD inputs before Spark runs. The maximum accepted EPSS lag defaults to two
+days, so an interrupted Silver pipeline fails visibly instead of repeatedly publishing stale Gold.
+
+The module creates separate least-privilege Glue and Scheduler roles, a Scheduler delivery DLQ,
+a Glue terminal-state EventBridge rule, a bounded failure log group, and a CloudWatch alarm. The
+DLQ covers failure to deliver `StartJobRun`; the Glue state rule covers `FAILED`, `TIMEOUT`, and
+`STOPPED` after the run has started.
+
+Terraform references an existing Gold bucket and immutable release objects; it deliberately does
+not build or upload the wheel. Configure a new release and keep the schedule disabled for the first
+apply:
+
+```hcl
+create_gold_daily_runtime = true
+gold_bucket_name          = "threatflow-gold-dev-capstone"
+gold_glue_script_s3_uri    = "s3://threatflow-silver-dev-capstone/_artifacts/glue/releases/<release>/vulnerability_priority_job.py"
+gold_glue_wheel_s3_uri     = "s3://threatflow-silver-dev-capstone/_artifacts/glue/releases/<release>/threatflow-0.1.0-py3-none-any.whl"
+gold_max_input_lag_days    = 2
+gold_schedule_enabled      = false
+```
+
+After applying and manually running the new Job once with AUTO, set
+`gold_schedule_enabled = true`, review a second saved plan, and apply it. Do not edit this Job in
+Glue Studio: `terraform plan` should be used to detect drift and `terraform apply` to restore the
+declared configuration.
 
 ## Repeatable local releases
 

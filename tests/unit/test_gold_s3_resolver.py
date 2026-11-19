@@ -192,6 +192,47 @@ def test_missing_previous_epss_fails_before_spark() -> None:
         )
 
 
+def test_auto_selects_latest_ready_epss_pair() -> None:
+    objects = silver_objects()
+    objects[
+        "silver/epss_scores/score_date=2026-11-14/_manifest.json"
+    ] = manifest("epss_scores", "epss.parquet", score_date="2026-11-14")
+    objects["silver/epss_scores/score_date=2026-11-14/epss.parquet"] = b"data"
+    resolver = S3SilverResolver("bucket", s3_client=FakeS3(objects))
+
+    selected = resolver.select_latest_ready_snapshot_date(
+        latest_allowed_date=date(2026, 11, 14),
+        max_input_lag_days=2,
+    )
+
+    assert selected == date(2026, 11, 13)
+
+
+def test_auto_rejects_stale_latest_ready_epss_pair() -> None:
+    resolver = S3SilverResolver("bucket", s3_client=FakeS3(silver_objects()))
+
+    with pytest.raises(S3GoldInputError, match="maximum is 2"):
+        resolver.select_latest_ready_snapshot_date(
+            latest_allowed_date=date(2026, 11, 19),
+            max_input_lag_days=2,
+        )
+
+
+def test_auto_fails_without_complete_epss_pair() -> None:
+    objects = silver_objects()
+    previous_prefix = "silver/epss_scores/score_date=2026-11-06/"
+    objects = {
+        key: value for key, value in objects.items() if not key.startswith(previous_prefix)
+    }
+    resolver = S3SilverResolver("bucket", s3_client=FakeS3(objects))
+
+    with pytest.raises(S3GoldInputError, match="no ready EPSS snapshot"):
+        resolver.select_latest_ready_snapshot_date(
+            latest_allowed_date=date(2026, 11, 14),
+            max_input_lag_days=2,
+        )
+
+
 def test_rejects_observed_at_after_cutoff() -> None:
     objects = silver_objects()
     for key in list(objects):

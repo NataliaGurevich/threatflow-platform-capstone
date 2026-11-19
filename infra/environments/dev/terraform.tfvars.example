@@ -47,3 +47,15 @@ nvd_silver_event_source_mapping_enabled = false
 # the Bronze object policy plus AWS SignInLocalDevelopmentAccess.
 create_airflow_local_identity = false
 airflow_local_user_name       = "threatflow-airflow-local"
+
+# Separate Terraform-managed Glue Job. Keep the schedule disabled until the AUTO
+# release has passed one manual smoke test. Terraform does not upload these artifacts.
+create_gold_daily_runtime = false
+gold_bucket_name          = "threatflow-gold-dev-123456789012"
+gold_prefix               = "gold"
+gold_glue_script_s3_uri    = "s3://threatflow-silver-dev-123456789012/_artifacts/glue/releases/<release>/vulnerability_priority_job.py"
+gold_glue_wheel_s3_uri     = "s3://threatflow-silver-dev-123456789012/_artifacts/glue/releases/<release>/threatflow-0.1.0-py3-none-any.whl"
+gold_max_input_lag_days    = 2
+gold_schedule_expression   = "cron(0 9 * * ? *)"
+gold_schedule_timezone     = "Europe/Berlin"
+gold_schedule_enabled      = false

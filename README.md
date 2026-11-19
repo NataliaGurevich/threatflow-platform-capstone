@@ -55,11 +55,15 @@ Required application job parameters are:
 --snapshot_date
 --snapshot_type
 --nvd_history_complete
+--max_input_lag_days
 ```
 
 Until complete NVD historical coverage is proven, use `RECONSTRUCTED` and `false`. A successful
 run writes `gold/vulnerability_priority_daily`, `gold/vulnerability_priority_summary_daily`, and
-the final commit under `gold/_commits/vulnerability_priority`.
+the final commit under `gold/_commits/vulnerability_priority`. `--snapshot_date=AUTO` selects the
+newest committed EPSS date no later than the previous UTC day that also has the exact seven-day
+comparison partition. The job fails closed when that pair is older than
+`--max_input_lag_days`; it does not silently publish a stale daily snapshot.
 - [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)

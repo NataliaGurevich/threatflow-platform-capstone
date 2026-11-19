@@ -13,6 +13,9 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_EPSS_MANIFEST = re.compile(
+    r"^epss_scores/score_date=(\d{4}-\d{2}-\d{2})/_manifest\.json$"
+)
 
 
 class S3GoldInputError(ValueError):
@@ -72,6 +75,48 @@ class S3SilverResolver:
         self.bucket = bucket
         self.prefix = prefix.strip("/")
         self.s3 = s3_client
+
+    def select_latest_ready_snapshot_date(
+        self,
+        *,
+        latest_allowed_date: date,
+        max_input_lag_days: int,
+    ) -> date:
+        """Select the newest committed EPSS date with its seven-day comparison input."""
+        if type(latest_allowed_date) is not date:
+            raise TypeError("latest_allowed_date must be a date")
+        if type(max_input_lag_days) is not int or max_input_lag_days < 0:
+            raise ValueError("max_input_lag_days must be a non-negative integer")
+
+        prefix = f"{self.prefix}/epss_scores/"
+        committed_dates = set()
+        for key in self._manifest_keys(prefix):
+            relative_key = key.removeprefix(f"{self.prefix}/")
+            match = _EPSS_MANIFEST.fullmatch(relative_key)
+            if match is None:
+                continue
+            try:
+                committed_dates.add(date.fromisoformat(match.group(1)))
+            except ValueError as exc:
+                raise S3GoldInputError(f"invalid EPSS partition date: {key}") from exc
+
+        candidates = [
+            item
+            for item in committed_dates
+            if item <= latest_allowed_date and item - timedelta(days=7) in committed_dates
+        ]
+        if not candidates:
+            raise S3GoldInputError(
+                "no ready EPSS snapshot has both current and seven-day comparison manifests"
+            )
+        selected = max(candidates)
+        lag_days = (latest_allowed_date - selected).days
+        if lag_days > max_input_lag_days:
+            raise S3GoldInputError(
+                f"latest ready EPSS snapshot {selected} is {lag_days} days behind "
+                f"the allowed date {latest_allowed_date}; maximum is {max_input_lag_days}"
+            )
+        return selected
 
     def resolve(
         self,

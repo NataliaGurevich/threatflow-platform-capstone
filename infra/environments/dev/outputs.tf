@@ -144,3 +144,28 @@ output "airflow_local_user_arn" {
   description = "Local Airflow IAM user ARN, or null when the identity is disabled."
   value       = try(aws_iam_user.airflow_local[0].arn, null)
 }
+
+output "gold_daily_job_name" {
+  description = "Terraform-managed daily Gold Glue job, or null when disabled."
+  value       = try(module.gold_runtime[0].job_name, null)
+}
+
+output "gold_daily_schedule_name" {
+  description = "Daily Gold EventBridge schedule, or null when disabled."
+  value       = try(module.gold_runtime[0].schedule_name, null)
+}
+
+output "gold_daily_schedule_state" {
+  description = "Daily Gold schedule state, or null when the runtime is absent."
+  value       = try(module.gold_runtime[0].schedule_state, null)
+}
+
+output "gold_daily_scheduler_dlq_arn" {
+  description = "DLQ for failed Scheduler target deliveries."
+  value       = try(module.gold_runtime[0].scheduler_dlq_arn, null)
+}
+
+output "gold_daily_failure_alarm_name" {
+  description = "Alarm for terminal daily Gold Glue failures."
+  value       = try(module.gold_runtime[0].failure_alarm_name, null)
+}
