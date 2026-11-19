@@ -1,6 +1,6 @@
 # ADR 0004: Build S3 Gold datasets with AWS Glue Spark
 
-- Status: Accepted; implementation pending
+- Status: Accepted; local transformation and publisher implemented, AWS runtime pending
 - Date: 2026-11-19
 
 ## Context
@@ -44,6 +44,11 @@ committed S3 Silver manifests
 The first implementation is invoked manually. Scheduling or event coordination is deferred until
 the single-snapshot path is verified. A later trigger must evaluate readiness for all sources; it
 must not start a Gold build directly for every NVD Parquet or manifest event.
+
+The repository now contains the locally testable Spark detail and summary transformations,
+fail-closed quality gates, canonical input fingerprinting, and an immutable filesystem publisher.
+The local publisher writes dataset manifests after verified Parquet and a shared product commit
+last. It is the executable contract for the future S3 publisher; it does not contact AWS.
 
 ### Initial datasets and grains
 
