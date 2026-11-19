@@ -1,21 +1,77 @@
 # ThreatFlow project defense
 
+## Key concepts and abbreviations
+
+Terms with a dotted underline have a hover tooltip. Tooltips use HTML `<abbr title="…">`;
+if a Markdown viewer strips inline HTML, the definitions remain available in this table.
+
+| Term | Plain-language meaning |
+| --- | --- |
+| <abbr title="Data Engineering">Data Engineering</abbr> | Designing systems that collect, validate, transform, and serve data. |
+| <abbr title="Minimum Viable Product">MVP</abbr> | The smallest project version that already solves the main user problem. |
+| <abbr title="National Vulnerability Database">NVD</abbr> | The NIST database providing CVE descriptions, CVSS, CWE context, and references. |
+| <abbr title="Cybersecurity and Infrastructure Security Agency">CISA</abbr> | The US government agency that publishes the KEV catalog. |
+| <abbr title="Known Exploited Vulnerabilities">KEV</abbr> | CISA's catalog of vulnerabilities known to be exploited in the real world. |
+| <abbr title="Forum of Incident Response and Security Teams">FIRST</abbr> | The international incident-response community that publishes EPSS. |
+| <abbr title="Exploit Prediction Scoring System">EPSS</abbr> | An estimate of exploitation probability over the next 30 days; it is not complete risk. |
+| <abbr title="Common Vulnerabilities and Exposures">CVE</abbr> | A standard public vulnerability identifier, for example `CVE-2026-12345`. |
+| <abbr title="Common Vulnerability Scoring System">CVSS</abbr> | A technical severity score; it does not prove exploitation probability or local exposure. |
+| <abbr title="Common Weakness Enumeration">CWE</abbr> | A classification of software weakness types, such as SQL injection. |
+| <abbr title="Security Operations Center">SOC</abbr> | A team that monitors threats and investigates security incidents. |
+| <abbr title="Application Programming Interface">API</abbr> | A formal interface used by the pipeline to request source data. |
+| <abbr title="Structured Query Language">SQL</abbr> | The language used to query and transform relational data. |
+| <abbr title="Directed Acyclic Graph">DAG</abbr> | Airflow's representation of task order and dependencies. |
+| <abbr title="Command-Line Interface">CLI</abbr> | A terminal interface for ingestion, backfill, and verification. |
+| <abbr title="Safe repeatability without unintended duplicates or state regression">Idempotency</abbr> | The property that makes ingestion and transformation safe to retry. |
+| <abbr title="INSERT-or-UPDATE: create a row or update the existing row for the same key">UPSERT</abbr> | A write that avoids unintended duplicates when a business key is replayed. |
+| <abbr title="Combining rows from multiple tables through a shared key">JOIN</abbr> | How NVD, KEV, and EPSS records are correlated by CVE ID. |
+| <abbr title="The origin and processing path of data from source to result">Lineage</abbr> | The ability to trace an output to its source payload, request, and pipeline run. |
+| <abbr title="Exact immutable source bytes; Bronze is their durable storage layer">Raw / Bronze</abbr> | Source data retained for replay, audit, and failure investigation. |
+| <abbr title="Validated typed data after cleaning and normalisation">Silver</abbr> | A prepared reusable layer for processing and analytics. |
+| <abbr title="Business-facing datasets and metrics">Gold</abbr> | Final analytical tables, aggregates, or data products. |
+| <abbr title="Secure Hash Algorithm with a 256-bit digest">SHA-256</abbr> | A cryptographic fingerprint for artifact identity, integrity, and deduplication. |
+| <abbr title="Amazon Simple Storage Service">S3</abbr> | AWS object storage. |
+| <abbr title="Amazon Simple Queue Service">SQS</abbr> | A managed AWS message queue. |
+| <abbr title="Dead-Letter Queue">DLQ</abbr> | A queue for messages that still fail after their allowed retries. |
+| <abbr title="Identity and Access Management">IAM</abbr> | AWS roles and policies that restrict access. |
+| <abbr title="Infrastructure as Code">IaC</abbr> | Infrastructure defined and versioned as code, such as Terraform. |
+| <abbr title="Business Intelligence">BI</abbr> | Analytics and visualisation tools, represented here by SQL and Metabase. |
+| <abbr title="Recovery Point Objective">RPO</abbr> | The maximum acceptable age of recoverable data after a failure. |
+| <abbr title="Recovery Time Objective">RTO</abbr> | The target time for restoring the system after a failure. |
+
 ## One-minute summary
 
-ThreatFlow is a data-engineering capstone that turns three public but semantically different
+ThreatFlow is a <abbr title="Data Engineering">data-engineering</abbr> capstone that turns three public but semantically different
 cybersecurity sources into a reproducible investigation product. It acquires NVD vulnerability
-records, the CISA Known Exploited Vulnerabilities (KEV) catalog, and FIRST EPSS daily scores;
+records, the <abbr title="Cybersecurity and Infrastructure Security Agency">CISA</abbr>
+<abbr title="Known Exploited Vulnerabilities">KEV</abbr> catalog, and
+<abbr title="Exploit Prediction Scoring System">FIRST EPSS</abbr> daily scores;
 preserves exact source bytes; validates completeness and meaning; and publishes an explainable
 priority queue through PostgreSQL analytical SQL and Metabase.
 
 The product answers:
 
-> Which CVEs should an analyst investigate first, **if the affected products are present in the
+> Which <abbr title="Common Vulnerabilities and Exposures">CVEs</abbr> should an analyst investigate first, **if the affected products are present in the
 > organisation**?
 
+Additional product questions:
+
+| Question | How ThreatFlow helps answer it |
+| --- | --- |
+| Which vulnerabilities have confirmed exploitation? | Shows CISA KEV membership, date added, required action, and ransomware context. |
+| Which critical CVEs also have a high exploitation probability? | Combines NVD severity with current EPSS and highlights matching records in the priority queue. |
+| Which CVEs have a materially rising exploitation signal over the last seven days? | Compares EPSS history and publishes the `WATCH` tier and rising-EPSS output. |
+| Which new or changed KEV entries require attention? | Uses CISA snapshots and change history to identify added, modified, and removed events. |
+| Why did a CVE receive `P1`, `P2`, `P3`, or `WATCH` priority? | Exposes the contributing NVD, KEV, and EPSS signals and the transparent policy rule. |
+| Which CVEs are missing enrichment from one of the sources? | Preserves CVEs through logical left joins and exposes missing NVD, KEV, or EPSS context instead of hiding the row. |
+| How fresh and complete is the data behind the queue? | Provides source-freshness, missing-date, cross-source coverage, and integrity indicators. |
+| Can the result be traced back to its origin? | Connects analytical output to the source, Raw artifact, SHA-256, request window/date, and processing lineage. |
+
 That qualification is essential. ThreatFlow has no asset inventory, installed-version evidence,
-network exposure, business criticality, compensating controls, or remediation status. CVSS is
-technical severity, EPSS is estimated exploitation probability, and KEV is evidence of
+network exposure, business criticality, compensating controls, or remediation status.
+<abbr title="Common Vulnerability Scoring System">CVSS</abbr> is technical severity,
+<abbr title="Exploit Prediction Scoring System">EPSS</abbr> is estimated exploitation probability,
+and <abbr title="Known Exploited Vulnerabilities">KEV</abbr> is evidence of
 exploitation in the wild. None proves local exposure.
 
 ## Scope, users, and supported decisions
@@ -36,37 +92,96 @@ management and automated remediation are explicitly out of scope.
 ## Architecture choices considered
 
 The sources are batch-oriented: NVD is a paginated mutable API, CISA publishes an irregular
-complete snapshot, and EPSS publishes one complete score set per day. A high-volume streaming
-platform would add machinery without changing those source semantics.
+complete snapshot, and EPSS publishes one complete score set per day. We compared three ways to
+deploy the same logical pipeline: fully local, hybrid, and fully on AWS.
 
-| Variant | Shape | Advantages | Disadvantages | Fit |
+| Variant | Shape | Advantages | Disadvantages | Decision |
 | --- | --- | --- | --- | --- |
-| 1. Local batch MVP — selected | Airflow → Python ingestion → immutable local Raw + PostgreSQL → SQL/Metabase | Few components; reproducible on a laptop; transactional UPSERTs; fast joins; low cost; easiest to demonstrate and test | Raw is host-bound; ingestion and analytics share PostgreSQL; large multi-year replay is less efficient | Best capstone balance and the implemented core |
-| 2. Intermediate S3 batch | Existing Airflow → S3 Bronze → Airflow transforms → partitioned Parquet + PostgreSQL → Athena/BI | Durable shared Raw; separates historical analytics; measures real scale before adding events | Transform remains coupled to acquisition; no queue/DLQ isolation; more cloud operations and cost | Sensible controlled migration step |
-| 3. Event-driven AWS lakehouse | S3 Bronze → SQS/Lambda or managed compute → Parquet/Iceberg Silver/Gold; PostgreSQL/RDS for current state; Athena for history | Independent scaling, durable buffering, cheap replay, long history, clear DLQ and cloud monitoring paths | IAM, deployment, compaction, schemas, observability, and cost are materially more complex | Target only when volume, latency, and reliability justify it |
+| 1. Fully local development | Sources → local Airflow/Python → local immutable Raw → PostgreSQL → SQL/Metabase | Simplest setup and debugging; low cost; works without cloud access | Raw is tied to one host; weaker disaster recovery and shared access; ingestion and history compete for local resources | Retained as developer mode and a reproducible fallback environment |
+| 2. Hybrid pipeline — **selected** | NVD/EPSS batching + CISA micro-batching + manual backfill → local Airflow/Python → local Raw plus S3 Bronze; PostgreSQL holds current state separately, while Parquet Silver → Gold → Metabase | Keeps the simplicity and transactions of the local MVP while adding durable/versioned Raw, replay, and verified S3 restore; supports incremental migration | Two environments require explicit lineage and configuration control; some compute and serving remain local | Best balance of reliability, cost, demonstrability, and already verified deployment for the capstone |
+| 3. Fully on AWS | EventBridge/MWAA or managed orchestration → S3 Bronze → SQS/Lambda/Glue/ECS → Parquet/Iceberg Silver/Gold → RDS/Athena/BI | Independent scaling, durable buffering, DLQ, cloud monitoring, and efficient long-term history | Highest IAM, deployment, observability, and cost complexity; requires complete runtime evidence | Target architecture for future scale, not the current capstone deployment |
 
-Variant 1 was selected because it proves the difficult engineering properties—source semantics,
-idempotency, integrity, recovery, lineage, and a usable data product—without hiding them behind a
-large platform. Kafka, Spark, Kubernetes, Celery/Redis, and a warehouse are not needed at current
-volume. The architecture still has explicit seams (`RawArtifactStore`, repositories, application
-services, analytical SQL) for evolution.
+### Variant 1 — fully local development
 
-## What is implemented, deployed, and planned
+```mermaid
+flowchart LR
+    SRC[NVD API<br/>CISA KEV<br/>FIRST EPSS]
+    AF[Local Airflow]
+    APP[Python ingestion<br/>validation · transformation]
+    RAW[Local immutable Raw]
+    PG[(Local PostgreSQL<br/>current · history · controls)]
+    SQL[Analytical SQL]
+    MB[Metabase]
 
-| Capability | Status | Defendable statement |
-| --- | --- | --- |
-| Docker Compose platform: PostgreSQL 17, Airflow 3.1 LocalExecutor, Metabase | Implemented locally | Reproducible local serving and orchestration stack with separate logical databases for application, Airflow metadata, and Metabase metadata |
-| NVD, CISA, EPSS ingestion and backfill | Implemented | Shared application services work from Airflow and standalone CLI paths |
-| Immutable local Raw storage and PostgreSQL manifest | Implemented | Exact bytes are content-addressed by source/SHA-256 and retained for replay/audit |
-| Current/history/control tables and analytical SQL | Implemented | Database keys, conditional UPSERTs, checkpoints, quality queries, and priority outputs are present |
-| Local EPSS/NVD/CISA Parquet Silver transformations | Implemented and fixture-tested | Typed, immutable outputs use manifests as commit markers; publication/reconciliation commands are explicit |
-| S3 Bronze replication | Deployed and verified in the development account on 2026-11-12 | All three sources had verified local and S3 locations; an exact-byte non-invasive restore was demonstrated; one legacy invalid CISA object still has a documented version-aware cleanup action |
-| AWS S3/SQS/Lambda Silver paths and CloudWatch/Terraform definitions | Implemented in code and IaC; end-to-end deployment not claimed | Handlers, queues, DLQs, image Lambdas, IAM boundaries, notifications, dashboards, and tests exist; ADRs state deployment/runtime verification is pending |
-| Full AWS lakehouse with Iceberg, Glue/Athena Gold, RDS/MWAA | Future/target | An evolution option, not the current capstone deployment |
+    SRC --> AF --> APP
+    APP --> RAW
+    APP --> PG --> SQL --> MB
+```
 
-This status boundary is more credible than presenting every checked-in cloud module as a running
-service. The dated S3 evidence is in [bronze-verification.md](bronze-verification.md); architecture
-decisions are in the [ADRs](adr/0001-s3-bronze-storage.md).
+### Variant 2 — hybrid pipeline, selected
+
+```mermaid
+flowchart LR
+    NVD[NVD API<br/>scheduled batching]
+    EPSS[FIRST EPSS<br/>daily batching]
+    CISA[CISA KEV<br/>micro-batching / polling]
+    BF[Manual backfill<br/>source + date range]
+    AF[Local Airflow]
+    APP[Local Python ingestion]
+    RAW[Local immutable Raw]
+    PG[(Local PostgreSQL)]
+    S3[S3 Bronze<br/>versioned durable copy]
+    Q[SQS]
+    DLQ[DLQ<br/>failed messages]
+    AWS[AWS Silver path<br/>Lambda / managed compute]
+    SIL[Parquet Silver]
+    GOLD[Gold layer<br/>curated analytical datasets]
+    MB[Metabase]
+    RESTORE[Replay / restore]
+
+    NVD --> AF
+    EPSS --> AF
+    CISA --> AF
+    BF --> AF
+    AF --> APP
+    APP --> RAW
+    APP --> PG
+    RAW --> S3
+    S3 --> RESTORE
+    S3 -. optional event path .-> Q --> AWS --> SIL
+    Q -. after retry limit .-> DLQ
+    SIL --> GOLD
+    GOLD --> MB
+```
+
+### Variant 3 — fully on AWS
+
+```mermaid
+flowchart LR
+    SRC[NVD API<br/>CISA KEV<br/>FIRST EPSS]
+    ORCH[MWAA / EventBridge<br/>managed orchestration]
+    BR[S3 Bronze]
+    Q[SQS]
+    DLQ[DLQ<br/>failed messages]
+    COMP[Lambda / Glue / ECS]
+    SIL[S3 Silver<br/>Parquet / Iceberg]
+    GOLD[S3 Gold]
+    RDS[(RDS PostgreSQL<br/>current state)]
+    ATH[Athena + Glue Catalog]
+    BI[BI / API]
+
+    SRC --> ORCH --> BR --> Q --> COMP --> SIL
+    Q -. after retry limit .-> DLQ
+    SIL --> GOLD --> ATH --> BI
+    SIL --> RDS --> BI
+```
+
+Hybrid variant 2 was selected. The local side keeps reproducible orchestration, application
+services, transactional UPSERTs, and a clear demonstration. S3 Bronze adds a versioned durable
+copy of exact source bytes, independent integrity verification, and a restore path. The fully AWS
+variant remains a target evolution and should be introduced only after runtime verification and
+justification from volume, latency, cost, and reliability requirements. Kafka, Spark, and
+Kubernetes are not required for the current source semantics or volume.
 
 ## Technology choices
 
@@ -252,10 +367,11 @@ local exposure.
 gives confirmed exploitation as a current snapshot; EPSS gives a daily probability and trend.
 Explain why no one signal is a complete risk decision.
 
-**1:45–2:45 — architecture decision.** Show the data-flow diagram. Airflow orchestrates reusable
-Python services; exact bytes go to immutable Raw; PostgreSQL provides transactional current/history
-serving; SQL and Metabase expose the product. Explain that this was selected over a cloud lakehouse
-to keep the capstone reproducible while preserving evolution seams.
+**1:45–2:45 — architecture decision.** Show all three variants: fully local, the selected hybrid,
+and fully on AWS. In the selected variant, local Airflow orchestrates reusable Python services,
+PostgreSQL and Metabase provide current/analytical serving, and exact Raw bytes are stored both
+locally and in a verified S3 Bronze copy for durability, replay, and restore. Fully AWS is the
+target, not the claimed current deployment.
 
 **2:45–4:00 — difficult engineering.** Walk through one invariant per source: NVD checkpoints only
 complete modified windows and rejects stale overwrite; CISA validates complete snapshots and never
