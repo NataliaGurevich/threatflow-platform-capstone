@@ -30,6 +30,7 @@ threatflow-reconcile-nvd-silver = "threatflow.transformation.nvd_silver_reconcil
 threatflow-bootstrap-nvd-silver = "threatflow.transformation.nvd_silver_bootstrap:main"
 threatflow-publish-nvd-silver = "threatflow.transformation.nvd_silver_publish:main"
 threatflow-build-reconstructed-gold = "threatflow.gold.local_reconstructed:main"
+threatflow-sync-gold-catalog = "threatflow.gold.catalog:main"
 
 [dependency-groups]
 dev = [

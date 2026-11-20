@@ -54,9 +54,24 @@ run "creates_disabled_daily_auto_gold_runtime" {
       aws_glue_job.this.number_of_workers == 2 &&
       aws_glue_job.this.default_arguments["--snapshot_date"] == "AUTO" &&
       aws_glue_job.this.default_arguments["--max_input_lag_days"] == "2" &&
+      aws_glue_job.this.default_arguments["--catalog_database"] == "threatflow_gold" &&
       aws_glue_job.this.default_arguments["--gold_bucket"] == var.gold_bucket_name
     )
     error_message = "The daily Glue job must use AUTO inputs and the dedicated Gold bucket."
+  }
+
+
+  assert {
+    condition = (
+      aws_glue_catalog_database.gold.name == "threatflow_gold" &&
+      aws_glue_catalog_table.detail.name == "vulnerability_priority_daily" &&
+      aws_glue_catalog_table.summary.name == "vulnerability_priority_summary_daily" &&
+      one(aws_glue_catalog_table.detail.partition_keys).name == "snapshot_date" &&
+      one(aws_glue_catalog_table.detail.partition_keys).type == "date" &&
+      length(one(aws_glue_catalog_table.detail.storage_descriptor).columns) == 26 &&
+      length(one(aws_glue_catalog_table.summary.storage_descriptor).columns) == 12
+    )
+    error_message = "Gold Catalog must expose both Parquet datasets partitioned by snapshot_date."
   }
 
   assert {
@@ -87,6 +102,16 @@ run "creates_disabled_daily_auto_gold_runtime" {
       strcontains(aws_iam_role_policy.glue_s3.policy, "threatflow-gold-test")
     )
     error_message = "Glue and Scheduler must have separate service roles and scoped S3 policies."
+  }
+
+
+  assert {
+    condition = (
+      strcontains(aws_iam_role_policy.glue_catalog.policy, "glue:CreatePartition") &&
+      strcontains(aws_iam_role_policy.glue_catalog.policy, "table/threatflow_gold/vulnerability_priority_daily") &&
+      strcontains(aws_iam_role_policy.glue_catalog.policy, "table/threatflow_gold/vulnerability_priority_summary_daily")
+    )
+    error_message = "Glue must have narrowly scoped permissions to register Gold partitions."
   }
 
   assert {

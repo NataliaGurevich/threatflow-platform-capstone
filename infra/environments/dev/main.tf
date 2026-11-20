@@ -192,6 +192,7 @@ module "gold_runtime" {
   silver_prefix        = var.silver_prefix
   gold_bucket_name     = var.gold_bucket_name
   gold_prefix          = var.gold_prefix
+  catalog_database     = var.gold_catalog_database
   script_s3_uri        = var.gold_glue_script_s3_uri
   wheel_s3_uri         = var.gold_glue_wheel_s3_uri
   snapshot_type        = "RECONSTRUCTED"

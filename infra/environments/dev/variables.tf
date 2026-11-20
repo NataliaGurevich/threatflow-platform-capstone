@@ -233,6 +233,12 @@ variable "gold_glue_wheel_s3_uri" {
   default     = ""
 }
 
+variable "gold_catalog_database" {
+  description = "Glue Catalog database for Gold Athena tables."
+  type        = string
+  default     = "threatflow_gold"
+}
+
 variable "gold_max_input_lag_days" {
   description = "Maximum age of the AUTO-selected EPSS snapshot relative to yesterday UTC."
   type        = number

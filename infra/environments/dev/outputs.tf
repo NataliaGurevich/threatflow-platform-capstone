@@ -150,6 +150,16 @@ output "gold_daily_job_name" {
   value       = try(module.gold_runtime[0].job_name, null)
 }
 
+output "gold_catalog_database_name" {
+  description = "Terraform-managed Glue Catalog database for Gold, or null when disabled."
+  value       = try(module.gold_runtime[0].catalog_database_name, null)
+}
+
+output "gold_catalog_table_names" {
+  description = "Terraform-managed Gold external table names."
+  value       = try(module.gold_runtime[0].catalog_table_names, [])
+}
+
 output "gold_daily_schedule_name" {
   description = "Daily Gold EventBridge schedule, or null when disabled."
   value       = try(module.gold_runtime[0].schedule_name, null)

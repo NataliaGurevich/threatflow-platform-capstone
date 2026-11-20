@@ -10,6 +10,17 @@ output "execution_role_arn" {
   value = aws_iam_role.glue.arn
 }
 
+output "catalog_database_name" {
+  value = aws_glue_catalog_database.gold.name
+}
+
+output "catalog_table_names" {
+  value = [
+    aws_glue_catalog_table.detail.name,
+    aws_glue_catalog_table.summary.name,
+  ]
+}
+
 output "schedule_name" {
   value = aws_scheduler_schedule.this.name
 }

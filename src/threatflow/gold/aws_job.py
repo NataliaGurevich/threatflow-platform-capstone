@@ -11,6 +11,7 @@ import boto3
 from botocore.config import Config
 from pyspark.storagelevel import StorageLevel
 
+from threatflow.gold.catalog import GoldCatalogRegistrar
 from threatflow.gold.local_publish import canonical_input_fingerprint
 from threatflow.gold.s3_publish import S3GoldPublisher, S3GoldPublishResult
 from threatflow.gold.s3_resolver import S3SilverResolver
@@ -36,12 +37,14 @@ def run_vulnerability_priority_gold_job(
     silver_prefix: str,
     gold_bucket: str,
     gold_prefix: str,
+    catalog_database: str,
     snapshot_date: date | None,
     snapshot_type: str,
     nvd_history_complete: bool,
     max_input_lag_days: int = 2,
     aws_region: str | None = None,
     s3_client: Any | None = None,
+    glue_client: Any | None = None,
 ) -> S3GoldPublishResult:
     """Resolve, transform, validate, and commit one S3 Gold date."""
     if snapshot_type == "OBSERVED" and not nvd_history_complete:
@@ -49,6 +52,11 @@ def run_vulnerability_priority_gold_job(
     generated_at = datetime.now(UTC)
     client = s3_client or boto3.client(
         "s3",
+        region_name=aws_region,
+        config=_BOTO_CONFIG,
+    )
+    catalog_client = glue_client or boto3.client(
+        "glue",
         region_name=aws_region,
         config=_BOTO_CONFIG,
     )
@@ -123,7 +131,15 @@ def run_vulnerability_priority_gold_job(
             snapshot_type=snapshot_type,
             nvd_history_complete=nvd_history_complete,
         )
+        catalog_result = GoldCatalogRegistrar(
+            bucket=gold_bucket,
+            prefix=gold_prefix,
+            database=catalog_database,
+            s3_client=client,
+            glue_client=catalog_client,
+        ).register_commit_uri(result.product_commit_uri)
         LOGGER.info("gold_publish_result %s", asdict(result))
+        LOGGER.info("gold_catalog_result %s", asdict(catalog_result))
         return result
     finally:
         if summary is not None:

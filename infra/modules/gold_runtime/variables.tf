@@ -33,6 +33,12 @@ variable "gold_prefix" {
   default = "gold"
 }
 
+variable "catalog_database" {
+  description = "Glue Catalog database containing the Gold external tables."
+  type        = string
+  default     = "threatflow_gold"
+}
+
 variable "script_s3_uri" {
   description = "Immutable S3 URI of the Glue Python entrypoint."
   type        = string

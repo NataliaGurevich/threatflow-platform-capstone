@@ -53,6 +53,7 @@ airflow_local_user_name       = "threatflow-airflow-local"
 create_gold_daily_runtime = false
 gold_bucket_name          = "threatflow-gold-dev-123456789012"
 gold_prefix               = "gold"
+gold_catalog_database     = "threatflow_gold"
 gold_glue_script_s3_uri    = "s3://threatflow-silver-dev-123456789012/_artifacts/glue/releases/<release>/vulnerability_priority_job.py"
 gold_glue_wheel_s3_uri     = "s3://threatflow-silver-dev-123456789012/_artifacts/glue/releases/<release>/threatflow-0.1.0-py3-none-any.whl"
 gold_max_input_lag_days    = 2

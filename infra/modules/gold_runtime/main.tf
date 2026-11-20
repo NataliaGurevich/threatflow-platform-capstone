@@ -6,6 +6,50 @@ locals {
   scheduler_name       = "${var.name_prefix}-daily"
   scheduler_group_name = "${var.name_prefix}-schedules"
   scheduler_group_arn  = "arn:aws:scheduler:${var.aws_region}:${var.account_id}:schedule-group/${local.scheduler_group_name}"
+
+  detail_columns = [
+    { name = "snapshot_type", type = "string" },
+    { name = "nvd_history_complete", type = "boolean" },
+    { name = "source_cutoff", type = "timestamp" },
+    { name = "cve_id", type = "string" },
+    { name = "priority_tier", type = "string" },
+    { name = "priority_reason", type = "string" },
+    { name = "is_kev", type = "boolean" },
+    { name = "vendor_project", type = "string" },
+    { name = "product", type = "string" },
+    { name = "vulnerability_name", type = "string" },
+    { name = "known_ransomware_campaign_use", type = "string" },
+    { name = "kev_date_added", type = "date" },
+    { name = "cisa_due_date", type = "date" },
+    { name = "nvd_published", type = "timestamp" },
+    { name = "nvd_last_modified", type = "timestamp" },
+    { name = "cvss_version", type = "string" },
+    { name = "cvss_score", type = "double" },
+    { name = "cvss_severity", type = "string" },
+    { name = "epss_score_date", type = "date" },
+    { name = "epss_score", type = "double" },
+    { name = "epss_percentile", type = "double" },
+    { name = "epss_7d_ago", type = "double" },
+    { name = "epss_7d_change", type = "double" },
+    { name = "generated_at", type = "timestamp" },
+    { name = "policy_version", type = "string" },
+    { name = "input_fingerprint", type = "string" },
+  ]
+
+  summary_columns = [
+    { name = "snapshot_type", type = "string" },
+    { name = "nvd_history_complete", type = "boolean" },
+    { name = "priority_tier", type = "string" },
+    { name = "vulnerability_count", type = "bigint" },
+    { name = "ransomware_count", type = "bigint" },
+    { name = "overdue_kev_count", type = "bigint" },
+    { name = "critical_count", type = "bigint" },
+    { name = "average_epss", type = "double" },
+    { name = "maximum_epss", type = "double" },
+    { name = "generated_at", type = "timestamp" },
+    { name = "policy_version", type = "string" },
+    { name = "input_fingerprint", type = "string" },
+  ]
 }
 
 resource "aws_iam_role" "glue" {
@@ -87,6 +131,102 @@ resource "aws_iam_role_policy" "glue_s3" {
   })
 }
 
+resource "aws_iam_role_policy" "glue_catalog" {
+  name = "${var.name_prefix}-catalog"
+  role = aws_iam_role.glue.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "RegisterCommittedGoldPartitions"
+      Effect = "Allow"
+      Action = [
+        "glue:GetDatabase",
+        "glue:GetTable",
+        "glue:GetPartition",
+        "glue:GetPartitions",
+        "glue:CreatePartition",
+      ]
+      Resource = [
+        "arn:aws:glue:${var.aws_region}:${var.account_id}:catalog",
+        "arn:aws:glue:${var.aws_region}:${var.account_id}:database/${var.catalog_database}",
+        "arn:aws:glue:${var.aws_region}:${var.account_id}:table/${var.catalog_database}/vulnerability_priority_daily",
+        "arn:aws:glue:${var.aws_region}:${var.account_id}:table/${var.catalog_database}/vulnerability_priority_summary_daily",
+      ]
+    }]
+  })
+}
+
+resource "aws_glue_catalog_database" "gold" {
+  name        = var.catalog_database
+  description = "ThreatFlow curated Gold datasets for Athena and Metabase."
+}
+
+resource "aws_glue_catalog_table" "detail" {
+  name          = "vulnerability_priority_daily"
+  database_name = aws_glue_catalog_database.gold.name
+  table_type    = "EXTERNAL_TABLE"
+  parameters = {
+    classification = "parquet"
+    EXTERNAL       = "TRUE"
+  }
+
+  partition_keys {
+    name = "snapshot_date"
+    type = "date"
+  }
+
+  storage_descriptor {
+    location      = "s3://${var.gold_bucket_name}/${var.gold_prefix}/vulnerability_priority_daily/"
+    input_format  = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
+    output_format = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
+
+    dynamic "columns" {
+      for_each = local.detail_columns
+      content {
+        name = columns.value.name
+        type = columns.value.type
+      }
+    }
+
+    ser_de_info {
+      serialization_library = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+    }
+  }
+}
+
+resource "aws_glue_catalog_table" "summary" {
+  name          = "vulnerability_priority_summary_daily"
+  database_name = aws_glue_catalog_database.gold.name
+  table_type    = "EXTERNAL_TABLE"
+  parameters = {
+    classification = "parquet"
+    EXTERNAL       = "TRUE"
+  }
+
+  partition_keys {
+    name = "snapshot_date"
+    type = "date"
+  }
+
+  storage_descriptor {
+    location      = "s3://${var.gold_bucket_name}/${var.gold_prefix}/vulnerability_priority_summary_daily/"
+    input_format  = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
+    output_format = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
+
+    dynamic "columns" {
+      for_each = local.summary_columns
+      content {
+        name = columns.value.name
+        type = columns.value.type
+      }
+    }
+
+    ser_de_info {
+      serialization_library = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+    }
+  }
+}
+
 resource "aws_glue_job" "this" {
   name              = var.name_prefix
   role_arn          = aws_iam_role.glue.arn
@@ -113,6 +253,7 @@ resource "aws_glue_job" "this" {
     "--silver_prefix"                    = var.silver_prefix
     "--gold_bucket"                      = var.gold_bucket_name
     "--gold_prefix"                      = var.gold_prefix
+    "--catalog_database"                 = aws_glue_catalog_database.gold.name
     "--snapshot_date"                    = "AUTO"
     "--snapshot_type"                    = var.snapshot_type
     "--nvd_history_complete"             = tostring(var.nvd_history_complete)
@@ -130,8 +271,14 @@ resource "aws_glue_job" "this" {
     "--conf"                             = "spark.eventLog.rolling.enabled=true --conf spark.sql.catalog.glue_catalog.glue.skip-name-validation=true"
   }
 
-  tags       = var.tags
-  depends_on = [aws_iam_role_policy.glue_s3, aws_iam_role_policy_attachment.glue_service]
+  tags = var.tags
+  depends_on = [
+    aws_glue_catalog_table.detail,
+    aws_glue_catalog_table.summary,
+    aws_iam_role_policy.glue_catalog,
+    aws_iam_role_policy.glue_s3,
+    aws_iam_role_policy_attachment.glue_service,
+  ]
 
   lifecycle {
     precondition {

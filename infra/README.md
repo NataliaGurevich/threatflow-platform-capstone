@@ -136,10 +136,12 @@ manual diagnostic Job. Its EventBridge Scheduler invokes `glue:StartJobRun` ever
 and all selected CISA/NVD inputs before Spark runs. The maximum accepted EPSS lag defaults to two
 days, so an interrupted Silver pipeline fails visibly instead of repeatedly publishing stale Gold.
 
-The module creates separate least-privilege Glue and Scheduler roles, a Scheduler delivery DLQ,
-a Glue terminal-state EventBridge rule, a bounded failure log group, and a CloudWatch alarm. The
-DLQ covers failure to deliver `StartJobRun`; the Glue state rule covers `FAILED`, `TIMEOUT`, and
-`STOPPED` after the run has started.
+The module creates the `threatflow_gold` Glue Catalog database, both Parquet external tables,
+separate least-privilege Glue and Scheduler roles, a Scheduler delivery DLQ, a Glue terminal-state
+EventBridge rule, a bounded failure log group, and a CloudWatch alarm. The Glue role can read the
+two table definitions and create partitions, but cannot update or delete tables or partitions.
+The DLQ covers failure to deliver `StartJobRun`; the Glue state rule covers `FAILED`, `TIMEOUT`,
+and `STOPPED` after the run has started.
 
 Terraform references an existing Gold bucket and immutable release objects; it deliberately does
 not build or upload the wheel. Configure a new release and keep the schedule disabled for the first
@@ -148,11 +150,32 @@ apply:
 ```hcl
 create_gold_daily_runtime = true
 gold_bucket_name          = "threatflow-gold-dev-capstone"
+gold_catalog_database     = "threatflow_gold"
 gold_glue_script_s3_uri    = "s3://threatflow-silver-dev-capstone/_artifacts/glue/releases/<release>/vulnerability_priority_job.py"
 gold_glue_wheel_s3_uri     = "s3://threatflow-silver-dev-capstone/_artifacts/glue/releases/<release>/threatflow-0.1.0-py3-none-any.whl"
 gold_max_input_lag_days    = 2
 gold_schedule_enabled      = false
 ```
+
+If the database and tables were first created manually, import them before the first apply. This
+adopts their metadata without recreating or deleting any data. Use the active AWS account ID in
+place of the example value:
+
+```bash
+terraform -chdir=infra/environments/dev import \
+  'module.gold_runtime[0].aws_glue_catalog_database.gold' \
+  '020502037761:threatflow_gold'
+terraform -chdir=infra/environments/dev import \
+  'module.gold_runtime[0].aws_glue_catalog_table.detail' \
+  '020502037761:threatflow_gold:vulnerability_priority_daily'
+terraform -chdir=infra/environments/dev import \
+  'module.gold_runtime[0].aws_glue_catalog_table.summary' \
+  '020502037761:threatflow_gold:vulnerability_priority_summary_daily'
+```
+
+Then review `terraform plan` carefully: it may normalize the manually entered table schema to the
+checked-in schema. Do not apply if the plan proposes deleting partitions. Terraform manages the
+database/table definitions; the application registrar owns date partitions.
 
 After applying and manually running the new Job once with AUTO, set
 `gold_schedule_enabled = true`, review a second saved plan, and apply it. Do not edit this Job in

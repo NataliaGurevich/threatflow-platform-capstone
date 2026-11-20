@@ -52,6 +52,7 @@ Required application job parameters are:
 --silver_prefix
 --gold_bucket
 --gold_prefix
+--catalog_database
 --snapshot_date
 --snapshot_type
 --nvd_history_complete
@@ -64,6 +65,29 @@ the final commit under `gold/_commits/vulnerability_priority`. `--snapshot_date=
 newest committed EPSS date no later than the previous UTC day that also has the exact seven-day
 comparison partition. The job fails closed when that pair is older than
 `--max_input_lag_days`; it does not silently publish a stale daily snapshot.
+
+After the product commit is created or safely reused, the same run registers both exact
+`run_id=<input_fingerprint>` locations in Glue Catalog. It reuses a partition only when its
+location is identical and fails on a date that already points to another run. Historical
+registration scans only committed product manifests; it never uses `MSCK REPAIR TABLE`:
+
+```bash
+threatflow-sync-gold-catalog \
+  --bucket threatflow-gold-dev-capstone \
+  --prefix gold \
+  --database threatflow_gold \
+  --region eu-central-1 \
+  --dry-run
+
+threatflow-sync-gold-catalog \
+  --bucket threatflow-gold-dev-capstone \
+  --prefix gold \
+  --database threatflow_gold \
+  --region eu-central-1
+```
+
+Use optional inclusive `--start-date` and `--end-date` arguments to limit a historical run.
+
 - [S3 Bronze runtime verification](docs/bronze-verification.md)
 - [Terraform AWS infrastructure](infra/README.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)
