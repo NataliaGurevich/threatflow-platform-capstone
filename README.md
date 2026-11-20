@@ -27,6 +27,10 @@ The capstone evidence is organised here:
 - [EPSS event-driven Silver decision](docs/adr/0002-epss-event-driven-silver.md)
 - [NVD committed-window Silver decision](docs/adr/0003-nvd-committed-window-silver.md)
 - [Glue Spark S3 Gold decision](docs/adr/0004-glue-spark-s3-gold.md)
+- [Athena Gold validation](docs/athena-gold-validation.md)
+- [Athena views for Metabase](docs/athena-metabase-views.md)
+- [Metabase access to Athena](docs/metabase-athena-access.md)
+- [Metabase Vulnerability Priority Overview](docs/metabase-vulnerability-priority-overview.md)
 
 ### Manual AWS Glue Gold smoke run
 

@@ -179,3 +179,15 @@ output "gold_daily_failure_alarm_name" {
   description = "Alarm for terminal daily Gold Glue failures."
   value       = try(module.gold_runtime[0].failure_alarm_name, null)
 }
+
+output "athena_metabase_workgroup_name" {
+  value = try(module.athena_metabase[0].workgroup_name, null)
+}
+
+output "athena_metabase_results_location" {
+  value = try(module.athena_metabase[0].results_location, null)
+}
+
+output "athena_metabase_user_name" {
+  value = try(module.athena_metabase[0].metabase_user_name, null)
+}

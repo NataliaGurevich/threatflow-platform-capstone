@@ -262,3 +262,37 @@ variable "gold_schedule_enabled" {
   type        = bool
   default     = false
 }
+
+variable "create_athena_metabase_serving" {
+  description = "Create the bounded Athena workgroup, query-results bucket, and Metabase service account."
+  type        = bool
+  default     = false
+}
+
+variable "athena_results_bucket_name" {
+  description = "Globally unique bucket for disposable Athena query results."
+  type        = string
+  default     = ""
+}
+
+variable "athena_results_retention_days" {
+  type    = number
+  default = 7
+}
+
+variable "athena_metabase_workgroup_name" {
+  type    = string
+  default = "threatflow-metabase-dev"
+}
+
+variable "athena_metabase_bytes_scanned_cutoff_per_query" {
+  description = "Maximum bytes one Metabase query may scan."
+  type        = number
+  default     = 1000000000
+}
+
+variable "athena_metabase_user_name" {
+  description = "IAM service account used by local Metabase; Terraform does not create access keys."
+  type        = string
+  default     = "threatflow-metabase-athena-dev"
+}

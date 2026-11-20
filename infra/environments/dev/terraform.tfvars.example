@@ -60,3 +60,12 @@ gold_max_input_lag_days    = 2
 gold_schedule_expression   = "cron(0 9 * * ? *)"
 gold_schedule_timezone     = "Europe/Berlin"
 gold_schedule_enabled      = false
+
+# Dedicated Athena serving boundary for the local Metabase instance. Terraform creates
+# the service-account user but deliberately does not create or store its access key.
+create_athena_metabase_serving                    = false
+athena_results_bucket_name                        = "threatflow-athena-results-dev-123456789012"
+atterraform -chdir=infra/environments/dev apply tfplanhena_results_retention_days                     = 7
+athena_metabase_workgroup_name                    = "threatflow-metabase-dev"
+athena_metabase_bytes_scanned_cutoff_per_query    = 1000000000
+athena_metabase_user_name                         = "threatflow-me

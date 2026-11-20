@@ -207,3 +207,24 @@ module "gold_runtime" {
     DataFlow = "silver-to-gold"
   }
 }
+
+module "athena_metabase" {
+  count  = var.create_athena_metabase_serving ? 1 : 0
+  source = "../../modules/athena_metabase"
+
+  aws_region                     = var.aws_region
+  account_id                     = data.aws_caller_identity.current.account_id
+  results_bucket_name            = var.athena_results_bucket_name
+  results_retention_days         = var.athena_results_retention_days
+  workgroup_name                 = var.athena_metabase_workgroup_name
+  bytes_scanned_cutoff_per_query = var.athena_metabase_bytes_scanned_cutoff_per_query
+  metabase_user_name             = var.athena_metabase_user_name
+  gold_bucket_name               = var.gold_bucket_name
+  gold_prefix                    = var.gold_prefix
+  catalog_database               = var.gold_catalog_database
+
+  tags = {
+    Owner    = "capstone"
+    DataFlow = "gold-to-metabase"
+  }
+}
