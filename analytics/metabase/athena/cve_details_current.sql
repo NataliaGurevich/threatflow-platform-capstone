@@ -1,0 +1,32 @@
+SELECT
+    snapshot_date,
+    snapshot_type,
+    nvd_history_complete,
+    source_cutoff,
+    cve_id,
+    priority_tier,
+    priority_rank,
+    priority_reason,
+    is_kev,
+    vendor_project,
+    product,
+    vulnerability_name,
+    known_ransomware_campaign_use,
+    kev_date_added,
+    cisa_due_date,
+    nvd_published,
+    nvd_last_modified,
+    cvss_version,
+    cvss_score,
+    cvss_severity,
+    epss_score_date,
+    round(epss_score, 5) AS epss_score,
+    round(epss_percentile, 5) AS epss_percentile,
+    round(epss_7d_ago, 5) AS epss_7d_ago,
+    round(epss_7d_change, 5) AS epss_7d_change,
+    generated_at,
+    policy_version,
+    input_fingerprint
+FROM threatflow_gold.current_vulnerability_priority
+WHERE upper(cve_id) = upper(trim({{cve_id}}))
+LIMIT 1;
