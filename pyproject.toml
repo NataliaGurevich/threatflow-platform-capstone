@@ -31,6 +31,7 @@ threatflow-bootstrap-nvd-silver = "threatflow.transformation.nvd_silver_bootstra
 threatflow-publish-nvd-silver = "threatflow.transformation.nvd_silver_publish:main"
 threatflow-build-reconstructed-gold = "threatflow.gold.local_reconstructed:main"
 threatflow-sync-gold-catalog = "threatflow.gold.catalog:main"
+threatflow-deploy-athena-views = "threatflow.gold.athena_views:main"
 
 [dependency-groups]
 dev = [

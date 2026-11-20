@@ -1,9 +1,29 @@
 # Athena views for Metabase
 
 The files in `analytics/athena/views` create a small serving layer over the committed Gold tables.
-Run each file separately in numeric order in Athena, using `AwsDataCatalog` and the
-`threatflow_gold` database. `CREATE OR REPLACE VIEW` changes Catalog metadata only; it does not
-copy or rewrite Parquet data.
+Deploy them from the repository checkout with the idempotent CLI; it validates every file, runs
+the statements sequentially in numeric order, stops on the first Athena failure, and verifies each
+result as a `VIRTUAL_VIEW` in Glue Catalog:
+
+```bash
+.venv/bin/python -m threatflow.gold.athena_views \
+  --database threatflow_gold \
+  --workgroup threatflow-metabase-dev \
+  --region eu-central-1 \
+  --dry-run
+
+.venv/bin/python -m threatflow.gold.athena_views \
+  --database threatflow_gold \
+  --workgroup threatflow-metabase-dev \
+  --region eu-central-1
+```
+
+The deployment identity uses the caller's AWS credentials; do not use the Metabase service account
+for this administrative command. `CREATE OR REPLACE VIEW` is idempotent and changes Catalog
+metadata only; it does not copy or rewrite Parquet data. New Gold partitions do not require a view
+deployment. Re-run the command only when a view SQL definition changes or during environment
+bootstrap. A CI job can invoke the same command after Terraform has created the database, tables,
+workgroup, and query-results location.
 
 | View | Grain | Intended Metabase use |
 | --- | --- | --- |
