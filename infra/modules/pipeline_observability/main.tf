@@ -183,6 +183,19 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
         x      = index * 8
         y      = 13
         width  = 8
+        height = 5
+        properties = {
+          title  = "${local.sources[source_key].label}: data volume in selected range"
+          region = var.aws_region
+          view   = "table"
+          query  = "SOURCE '${local.sources[source_key].log_group}' | fields jsonParse(message) as pipeline | filter pipeline.event_type = \"pipeline_event\" | filter pipeline.event in [\"bronze_received\", \"silver_committed\", \"silver_reused\"] | stats count(*) as events, sum(pipeline.bronze_size_bytes) / 1024 / 1024 as bronze_mib, sum(pipeline.record_count) as records by pipeline.event"
+        }
+      }],
+      [for index, source_key in sort(keys(local.sources)) : {
+        type   = "log"
+        x      = index * 8
+        y      = 18
+        width  = 8
         height = 8
         properties = {
           title  = "${local.sources[source_key].label}: latest object transitions"

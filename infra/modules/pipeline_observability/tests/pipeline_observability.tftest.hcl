@@ -66,9 +66,12 @@ run "creates_bounded_pipeline_observability" {
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.cisa_log_group_name) &&
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.epss_log_group_name) &&
       strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, var.nvd_log_group_name) &&
-      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "pipeline_event")
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "pipeline_event") &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "data volume in selected range") &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "bronze_size_bytes") &&
+      strcontains(aws_cloudwatch_dashboard.pipeline.dashboard_body, "record_count")
     )
-    error_message = "The dashboard must combine alarms, source metrics, and recent structured transitions."
+    error_message = "The dashboard must combine alarms, source metrics, data volume, and recent structured transitions."
   }
 
   assert {
@@ -89,8 +92,12 @@ run "creates_bounded_pipeline_observability" {
       length([
         for widget in jsondecode(aws_cloudwatch_dashboard.pipeline.dashboard_body).widgets : widget
         if widget.type == "metric" && widget.properties.view == "timeSeries"
+      ]) == 3 &&
+      length([
+        for widget in jsondecode(aws_cloudwatch_dashboard.pipeline.dashboard_body).widgets : widget
+        if widget.type == "log" && strcontains(widget.properties.title, "data volume")
       ]) == 3
     )
-    error_message = "The dashboard must show weekly pipeline totals above historical flow and backlog charts."
+    error_message = "The dashboard must show weekly pipeline totals, flow, backlog, and per-source data volume."
   }
 }
