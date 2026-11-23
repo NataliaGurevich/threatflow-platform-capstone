@@ -71,8 +71,10 @@ Airflow is orchestration only. HTTP, pagination, validation and transformation b
 ingestion modules; PostgreSQL transaction and UPSERT logic belongs to repositories. Raw
 bytes are stored before parsing/database writes.
 
-The optional AWS lakehouse design is documented separately. It is an evolution path, not a
-claim about the implemented MVP.
+The reproducible MVP remains local, while the development AWS path now implements S3
+Bronze/Silver, Glue Spark Gold, Glue Catalog, Athena serving views, scheduled execution, and
+CloudWatch observability. AWS deployment evidence and environment-specific configuration are
+documented separately from the local MVP.
 
 ## Incremental and recovery strategy
 
