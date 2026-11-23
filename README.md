@@ -3,8 +3,10 @@
 ThreatFlow is a cybersecurity intelligence data engineering capstone for CISA KEV, NVD,
 and EPSS. The implemented local platform provides reproducible ingestion, immutable Raw
 artifacts, PostgreSQL current/history/control tables, Airflow orchestration, data-quality
-checks, recovery paths, analytical SQL, and Metabase dashboards. The AWS lakehouse material
-is a documented future evolution, not a claim about the current deployment.
+checks, recovery paths, analytical SQL, and Metabase dashboards. The development AWS path
+extends the same data product through S3 Bronze/Silver, Glue Spark Gold, Glue Catalog,
+Athena, scheduled execution, and CloudWatch observability. Environment-specific deployment
+and verification evidence is documented separately from the reproducible local MVP.
 
 ## Capstone overview
 
