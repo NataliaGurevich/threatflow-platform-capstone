@@ -8,14 +8,16 @@ import pytest
 from threatflow.orchestration.backfill_controller import (
     AirflowClient,
     BackfillPlan,
+    backfill_run_id,
     execute_plan,
     validate_plan,
 )
 
 
 class FakeAirflow:
-    def __init__(self, states=None):
+    def __init__(self, states=None, existing=None):
         self.states = iter(states or ["success"])
+        self.existing = existing or {}
         self.triggered = []
 
     def trigger(self, run_id, configuration):
@@ -23,6 +25,9 @@ class FakeAirflow:
 
     def state(self, run_id):
         return next(self.states)
+
+    def state_or_none(self, run_id):
+        return self.existing.get(run_id)
 
 
 def plan(**overrides):
@@ -80,42 +85,37 @@ def test_invalid_plans(candidate):
         validate_plan(candidate)
 
 
-def test_execute_is_sequential_and_resumes(tmp_path, monkeypatch):
+def test_execute_is_sequential_and_resumes_from_airflow(monkeypatch):
     monkeypatch.setattr("threatflow.orchestration.backfill_controller.time.sleep", lambda _: None)
-    checkpoint = tmp_path / "checkpoint.json"
     airflow = FakeAirflow(["running", "success", "success"])
 
-    execute_plan(plan(), airflow, checkpoint, poll_seconds=0, output=io.StringIO())
+    execute_plan(plan(), airflow, poll_seconds=0, output=io.StringIO())
 
     assert len(airflow.triggered) == 2
     assert airflow.triggered[0][1]["start_date"] == "2026-01-01"
     assert airflow.triggered[1][1]["end_date"] == "2026-03-03"
-    saved_checkpoint = json.loads(checkpoint.read_text())
-    assert len(saved_checkpoint["completed_run_ids"]) == 2
-    assert "active" not in saved_checkpoint
-    assert saved_checkpoint["updated_at"].endswith("+00:00")
 
-    resumed = FakeAirflow()
-    execute_plan(plan(), resumed, checkpoint, poll_seconds=0, output=io.StringIO())
+    existing = {
+        backfill_run_id(plan(), window): "success" for window in plan().windows()
+    }
+    resumed = FakeAirflow(existing=existing)
+    execute_plan(plan(), resumed, poll_seconds=0, output=io.StringIO())
     assert resumed.triggered == []
 
 
-def test_failure_stops_before_next_window(tmp_path):
-    checkpoint = tmp_path / "checkpoint.json"
+def test_failure_stops_before_next_window():
     airflow = FakeAirflow(["failed"])
     with pytest.raises(RuntimeError, match="state=failed"):
-        execute_plan(plan(), airflow, checkpoint, output=io.StringIO())
+        execute_plan(plan(), airflow, output=io.StringIO())
     assert len(airflow.triggered) == 1
-    saved_checkpoint = json.loads(checkpoint.read_text())
-    assert saved_checkpoint["active"]["state"] == "failed"
-    assert saved_checkpoint["completed_run_ids"] == []
 
 
-def test_checkpoint_cannot_be_reused_for_different_plan(tmp_path):
-    checkpoint = tmp_path / "checkpoint.json"
-    execute_plan(plan(end=date(2026, 1, 1)), FakeAirflow(), checkpoint, output=io.StringIO())
-    with pytest.raises(ValueError, match="different backfill plan"):
-        execute_plan(plan(end=date(2026, 1, 2)), FakeAirflow(), checkpoint, output=io.StringIO())
+def test_different_plans_have_different_airflow_run_ids():
+    first = plan(end=date(2026, 1, 1))
+    second = plan(end=date(2026, 1, 2))
+    assert backfill_run_id(first, first.windows()[0]) != backfill_run_id(
+        second, second.windows()[0]
+    )
 
 
 def test_cisa_is_a_supported_source():

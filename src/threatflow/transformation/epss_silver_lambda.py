@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -35,6 +35,22 @@ LOGGER = logging.getLogger(__name__)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _parse_count_overrides(encoded: str) -> dict[date, int]:
+    try:
+        value = json.loads(encoded)
+    except json.JSONDecodeError as exc:
+        raise ValueError("EPSS minimum count overrides must be a JSON object") from exc
+    if not isinstance(value, dict):
+        raise ValueError("EPSS minimum count overrides must be a JSON object")
+    try:
+        parsed = {date.fromisoformat(key): count for key, count in value.items()}
+    except (TypeError, ValueError) as exc:
+        raise ValueError("EPSS minimum count override keys must be ISO dates") from exc
+    if any(type(count) is not int or count < 1 for count in parsed.values()):
+        raise ValueError("EPSS minimum count override values must be positive integers")
+    return parsed
+
+
 @dataclass(frozen=True)
 class EpssSilverLambdaConfig:
     bronze_bucket: str
@@ -43,6 +59,7 @@ class EpssSilverLambdaConfig:
     silver_prefix: str = "silver"
     aws_region: str | None = None
     temporary_root: str = "/tmp"
+    minimum_count_overrides: dict[date, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.bronze_bucket.strip():
@@ -53,6 +70,11 @@ class EpssSilverLambdaConfig:
             raise ValueError("bronze_prefix must not be empty")
         if not self.silver_prefix.strip("/"):
             raise ValueError("silver_prefix must not be empty")
+        if any(
+            type(count) is not int or count < 1
+            for count in self.minimum_count_overrides.values()
+        ):
+            raise ValueError("minimum_count_overrides values must be positive integers")
 
     @classmethod
     def from_environment(cls) -> EpssSilverLambdaConfig:
@@ -64,6 +86,9 @@ class EpssSilverLambdaConfig:
             bronze_prefix=os.getenv("THREATFLOW_S3_BRONZE_PREFIX", "bronze"),
             silver_prefix=os.getenv("THREATFLOW_S3_SILVER_PREFIX", "silver"),
             aws_region=os.getenv("THREATFLOW_AWS_REGION"),
+            minimum_count_overrides=_parse_count_overrides(
+                os.getenv("THREATFLOW_EPSS_MINIMUM_COUNT_OVERRIDES", "{}")
+            ),
         )
 
 
@@ -120,6 +145,7 @@ class EpssSilverS3Processor:
                 acquired_at=bronze.acquired_at,
                 expected_record_count=None,
                 output_root=temporary_root,
+                minimum_count_override=self.config.minimum_count_overrides.get(score_date),
             )
             return self._publish_partition(local_result)
 

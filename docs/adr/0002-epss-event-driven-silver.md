@@ -1,6 +1,6 @@
 # ADR 0002: Independent event-driven EPSS Silver processing
 
-- Status: Implemented; AWS deployment and end-to-end verification pending
+- Status: Superseded by ADR 0003
 - Date: 2026-11-13
 
 ## Context

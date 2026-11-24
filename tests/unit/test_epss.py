@@ -1,6 +1,7 @@
 import gzip
 import logging
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 
@@ -156,7 +157,7 @@ def test_historical_metadata_mismatch_is_rejected():
         parse_dataset(content, date(2024, 12, 21))
 
 
-def test_current_ingestion_requires_metadata_and_preserves_raw(tmp_path):
+def test_current_ingestion_requires_metadata_before_bronze_publish():
     from threatflow.config import Settings
     from threatflow.ingestion.epss_ingestion import ingest_epss
 
@@ -164,11 +165,29 @@ def test_current_ingestion_requires_metadata_and_preserves_raw(tmp_path):
         def fetch(self, score_date):
             return gz("cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n")
 
+    class NoStore:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            raise AssertionError("invalid archive must not reach accepted Bronze")
+
+    class QuarantineStore:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            return SimpleNamespace(uri="s3://bronze/bronze/_quarantine/epss.csv.gz")
+
     with pytest.raises(ValueError, match="no authoritative score_date"):
         ingest_epss(
-            client=Client(), settings=Settings(raw_data_dir=str(tmp_path), _env_file=None)
+            client=Client(),
+            settings=Settings(
+                raw_storage_backend="s3",
+                s3_bronze_bucket="bronze",
+                _env_file=None,
+            ),
+            raw_store=NoStore(),
+            quarantine_store=QuarantineStore(),
         )
-    assert list(tmp_path.rglob("*.csv.gz"))
 
 
 @pytest.mark.parametrize("year,minimum", [(2021, 50_000), (2024, 130_000), (2026, 180_000)])
@@ -182,7 +201,18 @@ def test_historical_completeness_floor(year, minimum):
         validate_completeness(minimum, date(year, 5, 1), minimum * 2)
 
 
-def test_incomplete_historical_archive_never_opens_database(tmp_path, monkeypatch):
+def test_exact_date_completeness_override_is_explicit_and_bounded():
+    from threatflow.ingestion.epss_ingestion import validate_completeness
+
+    score_date = date(2021, 4, 14)
+    validate_completeness(49_000, score_date, 100_000, minimum_count_override=49_000)
+    with pytest.raises(ValueError, match="minimum 49000"):
+        validate_completeness(48_999, score_date, 100_000, minimum_count_override=49_000)
+    with pytest.raises(ValueError, match="positive integer"):
+        validate_completeness(1, score_date, minimum_count_override=0)
+
+
+def test_incomplete_historical_archive_never_reaches_accepted_bronze():
     from threatflow.config import Settings
     from threatflow.ingestion.epss_ingestion import ingest_epss
 
@@ -193,20 +223,27 @@ def test_incomplete_historical_archive_never_opens_database(tmp_path, monkeypatc
                 "cve,epss,percentile\nCVE-2024-1234,0.1,0.2\n"
             )
 
-    def no_database(_):
-        raise AssertionError("incomplete archive must not reach database")
-
-    class NoReplica:
+    class NoStore:
         backend = "s3"
 
         def store(self, *args, **kwargs):
-            raise AssertionError("incomplete archive must not reach S3")
+            raise AssertionError("incomplete archive must not reach accepted Bronze")
 
-    monkeypatch.setattr("threatflow.ingestion.epss_ingestion.create_engine", no_database)
+    class QuarantineStore:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            return SimpleNamespace(uri="s3://bronze/bronze/_quarantine/epss.csv.gz")
+
     with pytest.raises(ValueError, match="incomplete"):
         ingest_epss(
             score_date=date(2021, 5, 1),
             client=Client(),
-            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
-            replica_store=NoReplica(),
+            settings=Settings(
+                raw_storage_backend="s3",
+                s3_bronze_bucket="bronze",
+                _env_file=None,
+            ),
+            raw_store=NoStore(),
+            quarantine_store=QuarantineStore(),
         )

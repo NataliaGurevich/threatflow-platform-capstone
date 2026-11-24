@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,8 @@ from threatflow.raw_storage import (
     calculate_sha256,
     validate_raw_artifact_input,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RawArtifactIntegrityError(OSError):
@@ -87,6 +90,12 @@ class S3RawArtifactStore:
         extra_metadata = _validate_extra_metadata(metadata)
         checksum_sha256 = _base64_sha256(digest)
         object_key = self._object_key(source, digest, normalized_extension)
+        requested_metadata = {
+            "sha256": digest,
+            "source": source,
+            "acquired-at": acquired_at.astimezone(UTC).isoformat(),
+            **extra_metadata,
+        }
         created = False
         version_id: str | None = None
 
@@ -98,12 +107,7 @@ class S3RawArtifactStore:
                 ContentLength=len(content),
                 ContentType=resolved_content_type,
                 ChecksumSHA256=checksum_sha256,
-                Metadata={
-                    "sha256": digest,
-                    "source": source,
-                    "acquired-at": acquired_at.astimezone(UTC).isoformat(),
-                    **extra_metadata,
-                },
+                Metadata=requested_metadata,
                 ServerSideEncryption="AES256",
                 IfNoneMatch="*",
             )
@@ -121,6 +125,38 @@ class S3RawArtifactStore:
         if version_id is not None:
             head_parameters["VersionId"] = version_id
         head = self.client.head_object(**head_parameters)
+        if not created:
+            self._verify_head(
+                head,
+                source=source,
+                digest=digest,
+                size_bytes=len(content),
+                content_type=resolved_content_type,
+                checksum_sha256=checksum_sha256,
+                extra_metadata={},
+            )
+            missing_metadata = _missing_extra_metadata(head, extra_metadata)
+            conflicting_metadata = _conflicting_extra_metadata(head, extra_metadata)
+            if conflicting_metadata:
+                self._verify_head(
+                    head,
+                    source=source,
+                    digest=digest,
+                    size_bytes=len(content),
+                    content_type=resolved_content_type,
+                    checksum_sha256=checksum_sha256,
+                    extra_metadata=extra_metadata,
+                )
+            if missing_metadata:
+                head, version_id = self._repair_missing_metadata(
+                    head,
+                    object_key=object_key,
+                    source=source,
+                    digest=digest,
+                    content_type=resolved_content_type,
+                    extra_metadata=extra_metadata,
+                )
+                created = True
         self._verify_head(
             head,
             source=source,
@@ -130,6 +166,7 @@ class S3RawArtifactStore:
             checksum_sha256=checksum_sha256,
             extra_metadata=extra_metadata,
         )
+        stored_acquired_at = _stored_acquired_at(head)
 
         return RawArtifactRef(
             source=source,
@@ -143,7 +180,75 @@ class S3RawArtifactStore:
             bucket=self.bucket,
             object_key=object_key,
             version_id=version_id or head.get("VersionId"),
+            first_acquired_at=stored_acquired_at,
         )
+
+    def _repair_missing_metadata(
+        self,
+        head: dict[str, Any],
+        *,
+        object_key: str,
+        source: str,
+        digest: str,
+        content_type: str,
+        extra_metadata: Mapping[str, str],
+    ) -> tuple[dict[str, Any], str]:
+        """Create a verified new version when a legacy object lacks routing metadata."""
+        previous_version_id = head.get("VersionId")
+        etag = head.get("ETag")
+        if not isinstance(previous_version_id, str) or not previous_version_id:
+            raise RawArtifactIntegrityError(
+                "cannot repair S3 metadata without a source object VersionId"
+            )
+        if not isinstance(etag, str) or not etag:
+            raise RawArtifactIntegrityError(
+                "cannot repair S3 metadata without a source object ETag"
+            )
+
+        existing_metadata = head.get("Metadata", {})
+        repaired_metadata = {
+            **existing_metadata,
+            "sha256": digest,
+            "source": source,
+            "acquired-at": existing_metadata["acquired-at"],
+            **extra_metadata,
+        }
+        response = self.client.copy_object(
+            Bucket=self.bucket,
+            Key=object_key,
+            CopySource={
+                "Bucket": self.bucket,
+                "Key": object_key,
+                "VersionId": previous_version_id,
+            },
+            CopySourceIfMatch=etag,
+            Metadata=repaired_metadata,
+            MetadataDirective="REPLACE",
+            ContentType=content_type,
+            ChecksumAlgorithm="SHA256",
+            ServerSideEncryption="AES256",
+        )
+        repaired_version_id = response.get("VersionId")
+        if not isinstance(repaired_version_id, str) or not repaired_version_id:
+            raise RawArtifactIntegrityError(
+                "S3 metadata repair did not create a versioned object"
+            )
+
+        LOGGER.info(
+            "stage=s3_raw_metadata_repaired source=%s sha256=%s "
+            "previous_version_id=%s repaired_version_id=%s",
+            source,
+            digest,
+            previous_version_id,
+            repaired_version_id,
+        )
+        repaired_head = self.client.head_object(
+            Bucket=self.bucket,
+            Key=object_key,
+            ChecksumMode="ENABLED",
+            VersionId=repaired_version_id,
+        )
+        return repaired_head, repaired_version_id
 
     def read(self, artifact: RawArtifactRef | str) -> bytes:
         """Read, close, and integrity-check an S3 artifact body."""
@@ -250,7 +355,40 @@ def _base64_sha256(hex_digest: str) -> str:
     return base64.b64encode(bytes.fromhex(hex_digest)).decode("ascii")
 
 
+def _stored_acquired_at(head: Mapping[str, Any]) -> datetime:
+    value = head.get("Metadata", {}).get("acquired-at")
+    if not isinstance(value, str):
+        raise RawArtifactIntegrityError("stored S3 object has invalid acquired-at metadata")
+    try:
+        acquired_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RawArtifactIntegrityError(
+            "stored S3 object has invalid acquired-at metadata"
+        ) from exc
+    if acquired_at.tzinfo is None or acquired_at.utcoffset() is None:
+        raise RawArtifactIntegrityError("stored S3 object has invalid acquired-at metadata")
+    return acquired_at.astimezone(UTC)
+
+
 def _is_precondition_failed(exc: ClientError) -> bool:
     error = exc.response.get("Error", {})
     status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return status == 412 or error.get("Code") in {"412", "PreconditionFailed"}
+
+
+def _missing_extra_metadata(
+    head: Mapping[str, Any], extra_metadata: Mapping[str, str]
+) -> tuple[str, ...]:
+    stored_metadata = head.get("Metadata", {})
+    return tuple(name for name in extra_metadata if name not in stored_metadata)
+
+
+def _conflicting_extra_metadata(
+    head: Mapping[str, Any], extra_metadata: Mapping[str, str]
+) -> tuple[str, ...]:
+    stored_metadata = head.get("Metadata", {})
+    return tuple(
+        name
+        for name, value in extra_metadata.items()
+        if name in stored_metadata and stored_metadata[name] != value
+    )

@@ -1,6 +1,5 @@
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -59,34 +58,6 @@ def test_cisa_daily_accepts_cron_trigger_point_interval(monkeypatch):
     assert calls == ["cisa"]
 
 
-def test_cisa_watcher_adapter_returns_small_result(monkeypatch):
-    from datetime import UTC, datetime
-
-    from threatflow.ingestion import cisa_watcher
-    from threatflow.ingestion.cisa_watcher import CisaWatchResult
-    from threatflow.orchestration.airflow_tasks import watch_cisa
-
-    monkeypatch.setattr(
-        cisa_watcher,
-        "watch_cisa_kev",
-        lambda: CisaWatchResult(
-            source="cisa_kev",
-            checked_at=datetime(2026, 11, 10, tzinfo=UTC),
-            sha256="a" * 64,
-            downloaded_bytes=123,
-            raw_artifact_path="data/raw/cisa.json",
-            raw_artifact_created=False,
-            changed=False,
-            ingestion=None,
-        ),
-    )
-
-    result = watch_cisa()
-
-    assert result["changed"] is False
-    assert result["sha256"] == "a" * 64
-    assert result["ingestion"] is None
-
 def test_airflow_daily_normalizes_source_and_logs_stages(monkeypatch, caplog):
     from threatflow.orchestration import airflow_tasks
     from threatflow.orchestration import ingestion_runner as runner
@@ -127,19 +98,28 @@ def test_epss_daily_accepts_cron_trigger_point_interval(monkeypatch):
 
 
 def test_nvd_daily_accepts_cron_trigger_point_interval(monkeypatch):
-    from threatflow import config
+    from threatflow import config, s3_pipeline_state
     from threatflow.orchestration import ingestion_runner as runner
 
     calls = []
-    engine = MagicMock()
-    configured_connection = engine.connect.return_value.execution_options.return_value
-    lock_connection = configured_connection.__enter__.return_value
-    lock_connection.execute.return_value.scalar_one_or_none.return_value = None
-    monkeypatch.setattr("sqlalchemy.create_engine", lambda url: engine)
+    advanced = []
+
+    class State:
+        @classmethod
+        def from_settings(cls, settings):
+            return cls()
+
+        def nvd_covered_until(self):
+            return None
+
+        def advance_nvd_covered_until(self, covered_until):
+            advanced.append(covered_until)
+
+    monkeypatch.setattr(s3_pipeline_state, "S3PipelineState", State)
     monkeypatch.setattr(
         config,
         "Settings",
-        lambda: SimpleNamespace(nvd_modified_lookback_hours=48, database_url="postgresql://unused"),
+        lambda: SimpleNamespace(nvd_modified_lookback_hours=48),
     )
 
     def fake_execute(source, start, end):
@@ -151,8 +131,7 @@ def test_nvd_daily_accepts_cron_trigger_point_interval(monkeypatch):
     trigger_time = datetime(2026, 11, 4, 3, tzinfo=UTC)
     assert run_daily("nvd", trigger_time, trigger_time).source == "nvd"
     assert calls == [("nvd", datetime(2026, 11, 2, 3, tzinfo=UTC), trigger_time)]
-    engine.begin.return_value.__enter__.return_value.execute.assert_called_once()
-    engine.dispose.assert_called_once()
+    assert advanced == [trigger_time]
 
 
 def test_backfill_modes_and_dates(monkeypatch):
@@ -176,21 +155,23 @@ def test_backfill_modes_and_dates(monkeypatch):
     assert [c[4] for c in calls] == [date(2025, 1, d) for d in (1, 2, 3)]
 
 
-def test_cisa_backfill_uses_git_history_service(monkeypatch):
-    from threatflow.ingestion import cisa_ingestion
+def test_cisa_backfill_runs_one_current_snapshot_sync(monkeypatch):
+    from threatflow.orchestration import ingestion_runner as runner
 
-    monkeypatch.setattr(
-        cisa_ingestion,
-        "backfill_cisa_kev",
-        lambda start, end: cisa_ingestion.CisaHistoryResult(
-            "cisa_kev", start, end, snapshots=2, parsed_records=20, downloaded_bytes=100
-        ),
-    )
+    calls = []
+
+    def fake_execute(source):
+        calls.append(source)
+        now = datetime.now(UTC)
+        return runner.IngestionResult(source, 20, 20, now, now)
+
+    monkeypatch.setattr(runner, "_execute", fake_execute)
 
     result = run_backfill("cisa", date(2025, 1, 1), date(2025, 1, 31))
 
     assert result.records_fetched == 20
-    assert result.records_written == 2
+    assert result.records_accepted == 20
+    assert calls == ["cisa"]
 
 
 def test_cisa_only_backfill_accepts_a_year_but_mixed_sources_do_not():

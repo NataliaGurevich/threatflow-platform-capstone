@@ -42,6 +42,7 @@ class RawArtifactRef:
     bucket: str | None = None
     object_key: str | None = None
     version_id: str | None = None
+    first_acquired_at: datetime | None = None
 
     @property
     def path(self) -> Path:
@@ -138,58 +139,20 @@ def create_raw_artifact_store(settings: Settings | None = None) -> RawArtifactSt
     raise ValueError(f"unsupported raw storage backend: {settings.raw_storage_backend}")
 
 
-def create_validated_replica_store(settings: Settings | None = None) -> RawArtifactStore | None:
-    """Build the optional S3 target used only after source validation succeeds."""
+def create_quarantine_artifact_store(settings: Settings | None = None) -> RawArtifactStore:
+    """Build the S3-only store for source responses rejected by Bronze quality gates."""
     from threatflow.config import Settings
-
-    settings = settings or Settings()
-    if not settings.s3_replication_enabled:
-        return None
     from threatflow.s3_raw_storage import S3RawArtifactStore
 
+    settings = settings or Settings()
     return S3RawArtifactStore(
         bucket=settings.s3_bronze_bucket or "",
-        prefix=settings.s3_bronze_prefix,
+        prefix=f"{settings.s3_bronze_prefix.strip('/')}/_quarantine",
         region_name=settings.aws_region,
         connect_timeout=settings.http_connect_timeout,
         read_timeout=settings.http_read_timeout,
         max_attempts=settings.http_retries + 1,
     )
-
-
-def replicate_validated_artifact(
-    replica_store: RawArtifactStore | None,
-    local_artifact: RawArtifactRef,
-    content: bytes,
-    acquired_at: datetime,
-    *,
-    metadata: Mapping[str, str] | None = None,
-) -> RawArtifactRef | None:
-    """Copy exact validated bytes to S3 and verify that logical identity is unchanged."""
-    if replica_store is None:
-        return None
-    if local_artifact.backend != "local":
-        raise ValueError("validated S3 replication requires a local source artifact")
-    storage_options = {"content_type": local_artifact.content_type}
-    if metadata is not None:
-        storage_options["metadata"] = metadata
-    replica = replica_store.store(
-        local_artifact.source,
-        content,
-        acquired_at,
-        local_artifact.extension,
-        **storage_options,
-    )
-    expected = (
-        local_artifact.source,
-        local_artifact.sha256,
-        local_artifact.extension,
-        local_artifact.size_bytes,
-    )
-    actual = (replica.source, replica.sha256, replica.extension, replica.size_bytes)
-    if replica.backend != "s3" or actual != expected:
-        raise ValueError("S3 replica identity does not match the validated local artifact")
-    return replica
 
 
 def store_raw_artifact(

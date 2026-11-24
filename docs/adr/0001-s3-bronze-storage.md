@@ -1,6 +1,6 @@
 # ADR 0001: Pluggable Bronze storage with Amazon S3
 
-- Status: Accepted
+- Status: Superseded by ADR 0003
 - Date: 2026-11-10
 
 ## Context

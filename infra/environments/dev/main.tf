@@ -87,6 +87,7 @@ module "epss_silver_lambda" {
   event_source_maximum_concurrency = var.epss_silver_event_source_maximum_concurrency
   reserved_concurrent_executions   = var.epss_silver_lambda_reserved_concurrency
   log_retention_days               = var.epss_silver_lambda_log_retention_days
+  minimum_count_overrides          = var.epss_minimum_count_overrides
 
   tags = {
     Owner = "capstone"

@@ -1,11 +1,10 @@
 import json
 import logging
-from datetime import date
 
 import httpx
 import pytest
 
-from threatflow.ingestion.cisa_client import CisaClient, CisaGitHistoryClient
+from threatflow.ingestion.cisa_client import CisaClient
 from threatflow.ingestion.cisa_parser import parse_catalog
 
 RECORD = {
@@ -138,51 +137,3 @@ def test_does_not_retry_nonretryable_client_error(monkeypatch):
     with pytest.raises(httpx.HTTPStatusError):
         CisaClient(retries=3).fetch()
     assert calls == 1
-
-
-def test_git_history_lists_commits_oldest_first_and_fetches_revision(monkeypatch):
-    sha_old = "a" * 40
-    sha_new = "b" * 40
-    requests = []
-
-    def get(url, **kwargs):
-        requests.append((url, kwargs))
-        request = httpx.Request("GET", url)
-        if "api.github.com" in url:
-            return httpx.Response(
-                200,
-                json=[
-                    {"sha": sha_new, "commit": {"committer": {"date": "2025-01-02T12:00:00Z"}}},
-                    {"sha": sha_old, "commit": {"committer": {"date": "2025-01-01T12:00:00Z"}}},
-                ],
-                request=request,
-            )
-        return httpx.Response(200, content=b"snapshot", request=request)
-
-    monkeypatch.setattr(httpx, "get", get)
-    client = CisaGitHistoryClient(token="test-token")
-
-    commits = client.list_commits(date(2025, 1, 1), date(2025, 1, 2))
-
-    assert [commit.sha for commit in commits] == [sha_old, sha_new]
-    assert client.fetch_snapshot(sha_old) == b"snapshot"
-    assert requests[0][1]["params"]["path"] == "known_exploited_vulnerabilities.json"
-    assert requests[0][1]["headers"]["Authorization"] == "Bearer test-token"
-    assert sha_old in requests[1][0]
-
-
-def test_git_history_rejects_invalid_metadata_and_revision(monkeypatch):
-    monkeypatch.setattr(
-        httpx,
-        "get",
-        lambda url, **kwargs: httpx.Response(
-            200,
-            json=[{"sha": "short", "commit": {"committer": {"date": "bad"}}}],
-            request=httpx.Request("GET", url),
-        ),
-    )
-    client = CisaGitHistoryClient()
-    with pytest.raises(ValueError, match="metadata"):
-        client.list_commits(date(2025, 1, 1), date(2025, 1, 2))
-    with pytest.raises(ValueError, match="revision"):
-        client.fetch_snapshot("../develop")

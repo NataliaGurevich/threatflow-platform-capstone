@@ -204,7 +204,9 @@ def test_apply_counts_created_and_reused_partitions(tmp_path) -> None:
 
 
 def test_apply_with_real_transformer_is_replay_safe(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     first_content = epss_raw(date(2026, 11, 1))
     second_content = epss_raw(date(2026, 11, 2))
     first = replace(

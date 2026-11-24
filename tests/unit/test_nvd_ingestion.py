@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
@@ -111,7 +112,7 @@ def test_client_window_limits_and_api_key_header(monkeypatch):
         client.fetch_page(start - timedelta(days=121), datetime.now(UTC), 0)
 
 
-def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
+def test_pagination_and_duplicate_resolution():
     r1, r2 = cve(modified="2024-01-02T00:00:00.000Z"), cve(modified="2024-01-03T00:00:00.000Z")
 
     class Client:
@@ -122,36 +123,16 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
             self.calls.append(index)
             return payload(index, 2, [r1] if index == 0 else [r2])
 
-    class Result:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-        def flush(self):
-            pass
-
-    class Engine:
-        def begin(self):
-            return Result()
-
-        def dispose(self):
-            pass
-
-    monkeypatch.setattr(nvd_ingestion, "create_engine", lambda _: Engine())
-    monkeypatch.setattr(nvd_ingestion, "upsert_records", lambda session, rows: (1, 0))
-    recorded_locations = []
-
-    def record(*args, **kwargs):
-        recorded_locations.extend(kwargs["additional_locations"])
-
-    class ReplicaStore:
+    class S3Store:
         backend = "s3"
+
+        def __init__(self):
+            self.stored = []
 
         def store(
             self, source, content, acquired_at, extension, *, content_type=None, metadata=None
         ):
+            self.stored.append((source, content, extension, metadata))
             digest = sha256(content).hexdigest()
             return RawArtifactRef(
                 source=source,
@@ -165,38 +146,147 @@ def test_pagination_and_duplicate_resolution(monkeypatch, tmp_path):
                 bucket="bronze",
                 object_key=f"bronze/source={source}/sha256={digest}.{extension.lstrip('.')}",
                 version_id=f"version-{digest[:12]}",
+                first_acquired_at=acquired_at,
             )
 
-    monkeypatch.setattr(nvd_ingestion, "record_artifact", record)
-    settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1, _env_file=None)
+    store = S3Store()
+    settings = Settings(
+        raw_storage_backend="s3",
+        s3_bronze_bucket="bronze",
+        nvd_page_size=1,
+        _env_file=None,
+    )
     result = nvd_ingestion.ingest_nvd_cves(
         client=Client(),
         settings=settings,
         start=datetime(2024, 1, 1, tzinfo=UTC),
         end=datetime(2024, 1, 5, tzinfo=UTC),
-        replica_store=ReplicaStore(),
+        raw_store=store,
     )
     assert result.pages_retrieved == 2 and result.total_records_received == 2
     assert result.unique_records_processed == 1
     assert result.rejected_count == 0
     assert result.window_manifest_uri is not None
     assert result.window_manifest_version_id is not None
-    assert len(recorded_locations) == 2
-    assert all(location.backend == "s3" for location in recorded_locations)
+    assert len(store.stored) == 3
+    assert store.stored[-1][2] == ".window.json"
 
 
-def test_total_change_fails_after_raw_storage(monkeypatch, tmp_path):
+def test_identical_retry_reuses_nvd_window_manifest(monkeypatch):
+    first_acquisition = datetime(2026, 11, 20, 3, tzinfo=UTC)
+    retry_acquisition = first_acquisition + timedelta(minutes=5)
+
+    class Clock(datetime):
+        values = iter((first_acquisition, retry_acquisition))
+
+        @classmethod
+        def now(cls, tz=None):
+            value = next(cls.values)
+            return value if tz is None else value.astimezone(tz)
+
+    class Client:
+        def fetch_page(self, start, end, index):
+            assert index == 0
+            return payload(0, 1, [cve()])
+
+    class ContentAddressedStore:
+        backend = "s3"
+
+        def __init__(self):
+            self.artifacts = {}
+
+        def store(
+            self, source, content, acquired_at, extension, *, content_type=None, metadata=None
+        ):
+            del metadata
+            normalized_extension = extension.removeprefix(".")
+            digest = sha256(content).hexdigest()
+            identity = source, digest, normalized_extension
+            existing = self.artifacts.get(identity)
+            if existing is not None:
+                return replace(existing, created=False)
+            artifact = RawArtifactRef(
+                source=source,
+                sha256=digest,
+                uri=(
+                    f"s3://bronze/bronze/source={source}/"
+                    f"sha256={digest}.{normalized_extension}"
+                ),
+                extension=normalized_extension,
+                content_type=content_type or "application/json",
+                size_bytes=len(content),
+                created=True,
+                backend="s3",
+                bucket="bronze",
+                object_key=(
+                    f"bronze/source={source}/sha256={digest}.{normalized_extension}"
+                ),
+                version_id=f"version-{digest[:12]}",
+                first_acquired_at=acquired_at,
+            )
+            self.artifacts[identity] = artifact
+            return artifact
+
+    monkeypatch.setattr(nvd_ingestion, "datetime", Clock)
+    store = ContentAddressedStore()
+    settings = Settings(
+        raw_storage_backend="s3",
+        s3_bronze_bucket="bronze",
+        _env_file=None,
+    )
+    start = datetime(2026, 11, 19, tzinfo=UTC)
+    end = datetime(2026, 11, 20, tzinfo=UTC)
+
+    first = nvd_ingestion.ingest_nvd_cves(
+        client=Client(), settings=settings, start=start, end=end, raw_store=store
+    )
+    retry = nvd_ingestion.ingest_nvd_cves(
+        client=Client(), settings=settings, start=start, end=end, raw_store=store
+    )
+
+    assert retry.window_manifest_sha256 == first.window_manifest_sha256
+    assert first.bronze_objects_created == 2
+    assert retry.bronze_objects_created == 0
+    assert retry.bronze_objects_reused == 2
+
+
+def test_total_change_fails_without_publishing_window_manifest():
     class Client:
         def fetch_page(self, start, end, index):
             return payload(index, 2 if index == 0 else 3, [cve(id=f"CVE-2024-{index + 1:04d}")])
 
-    settings = Settings(raw_data_dir=str(tmp_path), nvd_page_size=1, _env_file=None)
+    settings = Settings(
+        raw_storage_backend="s3",
+        s3_bronze_bucket="bronze",
+        nvd_page_size=1,
+        _env_file=None,
+    )
 
-    class NoReplica:
+    class RecordingStore:
         backend = "s3"
 
-        def store(self, *args, **kwargs):
-            raise AssertionError("invalid pagination must not reach S3")
+        def __init__(self):
+            self.extensions = []
+
+        def store(self, source, content, acquired_at, extension, **kwargs):
+            self.extensions.append(extension)
+            digest = sha256(content).hexdigest()
+            return RawArtifactRef(
+                source,
+                digest,
+                f"s3://bronze/bronze/source={source}/{digest}.json",
+                extension.removeprefix("."),
+                "application/json",
+                len(content),
+                True,
+                "s3",
+                "bronze",
+                f"bronze/source={source}/{digest}.json",
+                f"version-{digest[:12]}",
+            )
+
+    store = RecordingStore()
+    quarantine = RecordingStore()
 
     with pytest.raises(ValueError, match="totalResults changed"):
         nvd_ingestion.ingest_nvd_cves(
@@ -204,5 +294,8 @@ def test_total_change_fails_after_raw_storage(monkeypatch, tmp_path):
             settings=settings,
             start=datetime(2024, 1, 1, tzinfo=UTC),
             end=datetime(2024, 1, 5, tzinfo=UTC),
-            replica_store=NoReplica(),
+            raw_store=store,
+            quarantine_store=quarantine,
         )
+    assert store.extensions == [".json"]
+    assert quarantine.extensions == [".json"]

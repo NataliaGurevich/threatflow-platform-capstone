@@ -1,4 +1,3 @@
-import hashlib
 import json
 from types import SimpleNamespace
 
@@ -8,59 +7,140 @@ from threatflow.config import Settings
 from threatflow.ingestion.cisa_ingestion import ingest_cisa_kev
 
 
-def test_ingestion_preserves_response_bytes_before_parsing(tmp_path, monkeypatch):
+def record(number):
+    return {
+        "cveID": f"CVE-2024-{number:04d}",
+        "vendorProject": "Vendor",
+        "product": "Product",
+        "vulnerabilityName": "Issue",
+        "dateAdded": "2024-01-01",
+        "shortDescription": "Description",
+        "requiredAction": "Patch",
+        "dueDate": "2024-02-01",
+        "knownRansomwareCampaignUse": "Unknown",
+    }
+
+
+def test_invalid_catalog_is_not_published_to_accepted_bronze():
     content = (json.dumps({"vulnerabilities": []}, separators=(",", ":")) + "\n").encode()
-    observed = {}
+    quarantined = []
 
     class Client:
         def fetch(self):
             return content
 
     class RawStore:
-        def store(self, source, raw, acquired_at, extension, *, content_type=None):
-            observed["bytes"] = raw
-            path = tmp_path / "artifact.json"
-            path.write_bytes(raw)
-            return SimpleNamespace(
-                uri=str(path),
-                sha256=hashlib.sha256(raw).hexdigest(),
-                size_bytes=len(raw),
-            )
-
-    class Engine:
-        def begin(self):
-            class Context:
-                def __enter__(self):
-                    return object()
-
-                def __exit__(self, *args):
-                    return False
-
-            return Context()
-
-        def dispose(self):
-            pass
-
-    def no_database(_):
-        raise AssertionError("database must not be opened for invalid catalog")
-
-    class NoReplica:
         backend = "s3"
 
         def store(self, *args, **kwargs):
-            raise AssertionError("invalid catalog must not reach S3")
+            raise AssertionError("invalid catalog must not reach accepted Bronze")
 
-    monkeypatch.setattr("threatflow.ingestion.cisa_ingestion.create_engine", no_database)
-    monkeypatch.setattr(
-        "threatflow.ingestion.cisa_ingestion.upsert_records", lambda session, records: (0, 0)
-    )
+    class QuarantineStore:
+        backend = "s3"
+
+        def store(self, source, raw, acquired_at, extension, **kwargs):
+            quarantined.append((source, raw, extension, kwargs["metadata"]))
+            return SimpleNamespace(uri="s3://bronze/bronze/_quarantine/cisa.json")
+
     with pytest.raises(ValueError, match="empty"):
         ingest_cisa_kev(
             client=Client(),
-            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
+            settings=Settings(
+                raw_storage_backend="s3",
+                s3_bronze_bucket="bronze",
+                _env_file=None,
+            ),
             raw_store=RawStore(),
-            replica_store=NoReplica(),
+            quarantine_store=QuarantineStore(),
         )
+    assert quarantined == [
+        (
+            "cisa_kev",
+            content,
+            ".json",
+            {
+                "artifact-status": "quarantined",
+                "failure-stage": "bronze-data-quality",
+            },
+        )
+    ]
 
-    assert observed["bytes"] == content
-    assert (tmp_path / "artifact.json").read_bytes() == content
+
+def test_catalog_below_absolute_floor_is_quarantined():
+    content = json.dumps({"count": 1, "vulnerabilities": [record(1)]}).encode()
+    quarantined = []
+
+    class Client:
+        def fetch(self):
+            return content
+
+    class AcceptedStore:
+        backend = "s3"
+
+        def store(self, *args, **kwargs):
+            raise AssertionError("small catalog must not reach accepted Bronze")
+
+    class QuarantineStore:
+        backend = "s3"
+
+        def store(self, source, raw, acquired_at, extension, **kwargs):
+            quarantined.append(raw)
+            return SimpleNamespace(uri="s3://bronze/bronze/_quarantine/cisa.json")
+
+    class State:
+        def latest_cisa_record_count(self):
+            return None
+
+    with pytest.raises(ValueError, match="minimum 100"):
+        ingest_cisa_kev(
+            client=Client(),
+            settings=Settings(
+                raw_storage_backend="s3",
+                s3_bronze_bucket="bronze",
+                _env_file=None,
+            ),
+            raw_store=AcceptedStore(),
+            quarantine_store=QuarantineStore(),
+            state_store=State(),
+        )
+    assert quarantined == [content]
+
+
+def test_valid_catalog_publishes_once_to_accepted_bronze():
+    content = json.dumps(
+        {"count": 100, "vulnerabilities": [record(number) for number in range(1, 101)]}
+    ).encode()
+    stored = []
+
+    class Client:
+        def fetch(self):
+            return content
+
+    class AcceptedStore:
+        backend = "s3"
+
+        def store(self, source, raw, acquired_at, extension, **kwargs):
+            stored.append((source, raw, kwargs["metadata"]))
+            return SimpleNamespace(
+                uri="s3://bronze/bronze/source=cisa_kev/catalog.json",
+                sha256="a" * 64,
+                created=True,
+            )
+
+    class State:
+        def latest_cisa_record_count(self):
+            return 100
+
+    result = ingest_cisa_kev(
+        client=Client(),
+        settings=Settings(
+            raw_storage_backend="s3",
+            s3_bronze_bucket="bronze",
+            _env_file=None,
+        ),
+        raw_store=AcceptedStore(),
+        state_store=State(),
+    )
+
+    assert result.records_accepted == 100
+    assert stored[0][2] == {"request-mode": "snapshot", "record-count": "100"}

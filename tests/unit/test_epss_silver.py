@@ -39,7 +39,9 @@ def transform(content: bytes, output_root, *, expected_count: int = 2):
 def test_transform_writes_typed_partition_manifest_and_reuses(
     tmp_path, monkeypatch
 ) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     content = raw()
 
     created = transform(content, tmp_path)
@@ -87,7 +89,9 @@ def test_completeness_failure_does_not_publish(tmp_path) -> None:
 
 
 def test_conflicting_source_for_same_score_date_is_rejected(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     transform(raw(), tmp_path)
 
     with pytest.raises(FileExistsError, match="conflicting EPSS Silver partition"):

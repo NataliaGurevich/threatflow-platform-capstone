@@ -31,36 +31,13 @@ def daily(source, interval_start, interval_end):
     log.info("stage=ingestion_start source=%s", source)
     result = run_daily(source, start, end)
     log.info(
-        "stage=ingestion_complete source=%s fetched=%d written=%d changes_written=%d",
+        "stage=ingestion_complete source=%s fetched=%d accepted=%d "
+        "bronze_created=%d bronze_reused=%d",
         result.source,
         result.records_fetched,
-        result.records_written,
-        result.changes_written,
-    )
-    return asdict(result)
-
-
-def watch_cisa():
-    """Run the optional CISA change detector without replacing cisa_daily."""
-    import logging
-    from dataclasses import asdict
-
-    from threatflow.ingestion.cisa_watcher import watch_cisa_kev
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-    log = logging.getLogger("threatflow.airflow.cisa_watcher")
-    log.info("stage=cisa_watch_start")
-    result = watch_cisa_kev()
-    log.info(
-        "stage=cisa_watch_complete changed=%s sha256=%s downloaded_bytes=%d "
-        "raw_artifact_created=%s",
-        result.changed,
-        result.sha256,
-        result.downloaded_bytes,
-        result.raw_artifact_created,
+        result.records_accepted,
+        result.bronze_objects_created,
+        result.bronze_objects_reused,
     )
     return asdict(result)
 
@@ -115,9 +92,12 @@ def backfill_source(source, sources, start_date, end_date, nvd_mode, chunk_days)
         int(chunk_days),
     )
     log.info(
-        "stage=backfill_complete source=%s fetched=%d written=%d",
+        "stage=backfill_complete source=%s fetched=%d accepted=%d "
+        "bronze_created=%d bronze_reused=%d",
         result.source,
         result.records_fetched,
-        result.records_written,
+        result.records_accepted,
+        result.bronze_objects_created,
+        result.bronze_objects_reused,
     )
     return asdict(result)

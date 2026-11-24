@@ -3,30 +3,18 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime, timedelta
-
-from sqlalchemy import create_engine, func, select
+from datetime import UTC, datetime
 
 from threatflow.config import Settings
-from threatflow.derivations.cisa_changes import (
-    calculate_changes,
-    json_safe_record,
-)
-from threatflow.ingestion.cisa_client import CisaClient, CisaGitHistoryClient
+from threatflow.ingestion.cisa_client import CisaClient
 from threatflow.ingestion.cisa_parser import parse_catalog
-from threatflow.models.cisa import CisaKevVulnerability
-from threatflow.models.raw_artifact import RawArtifact
 from threatflow.raw_storage import (
     RawArtifactStore,
+    create_quarantine_artifact_store,
     create_raw_artifact_store,
-    create_validated_replica_store,
-    replicate_validated_artifact,
 )
-from threatflow.repository.cisa_change_repository import upsert_changes
-from threatflow.repository.cisa_repository import upsert_records
-from threatflow.repository.raw_artifact_repository import artifact_location_uri, record_artifact
+from threatflow.s3_pipeline_state import S3PipelineState
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,20 +27,8 @@ class IngestionResult:
     sha256: str
     downloaded_bytes: int
     parsed_records: int
-    inserted_records: int
-    updated_records: int
-    change_records: int
-
-
-@dataclass(frozen=True)
-class CisaHistoryResult:
-    source: str
-    start_date: date
-    end_date: date
-    snapshots: int
-    parsed_records: int
-    downloaded_bytes: int
-    invalid_snapshots: int = 0
+    records_accepted: int
+    bronze_object_created: bool
 
 
 def ingest_cisa_kev(
@@ -60,10 +36,13 @@ def ingest_cisa_kev(
     client: CisaClient | None = None,
     settings: Settings | None = None,
     raw_store: RawArtifactStore | None = None,
-    replica_store: RawArtifactStore | None = None,
+    quarantine_store: RawArtifactStore | None = None,
+    state_store: S3PipelineState | None = None,
 ) -> IngestionResult:
     settings = settings or Settings()
     raw_store = raw_store or create_raw_artifact_store(settings)
+    if raw_store.backend != "s3":
+        raise ValueError("CISA ingestion requires the S3 Bronze backend")
     acquired_at = datetime.now(UTC)
     LOGGER.info("CISA KEV ingestion started", extra={"source": "cisa_kev"})
     content = (
@@ -74,236 +53,57 @@ def ingest_cisa_kev(
             retries=settings.http_retries,
         )
     ).fetch()
-    artifact = raw_store.store("cisa_kev", content, acquired_at, ".json")
-    records = parse_catalog(content)
-    engine = create_engine(settings.database_url)
     try:
-        from sqlalchemy.orm import Session
-
-        with Session(engine) as session:
-            previous_count = (
-                session.scalar(select(func.count()).select_from(CisaKevVulnerability)) or 0
+        records = parse_catalog(content)
+        state_store = state_store or S3PipelineState.from_settings(settings)
+        previous_count = state_store.latest_cisa_record_count()
+        minimum = settings.cisa_minimum_record_count
+        if previous_count is not None:
+            minimum = max(
+                minimum,
+                int(previous_count * settings.cisa_minimum_previous_ratio),
             )
-        if previous_count >= 20 and len(records) < previous_count * 0.8:
+        if len(records) < minimum:
             raise ValueError(
-                f"CISA KEV catalog shrank unexpectedly: "
-                f"{len(records)} versus {previous_count} stored"
+                f"CISA KEV catalog is implausibly small: {len(records)} records; "
+                f"minimum {minimum}, previous Silver count {previous_count}"
             )
-        if replica_store is None:
-            replica_store = create_validated_replica_store(settings)
-        replica = replicate_validated_artifact(
-            replica_store,
-            artifact,
+    except ValueError:
+        quarantine_store = quarantine_store or create_quarantine_artifact_store(settings)
+        artifact = quarantine_store.store(
+            "cisa_kev",
             content,
             acquired_at,
+            ".json",
             metadata={
-                "request-mode": "snapshot",
-                "record-count": str(len(records)),
+                "artifact-status": "quarantined",
+                "failure-stage": "bronze-data-quality",
             },
         )
-
-        with engine.begin() as connection:
-            with Session(bind=connection) as session:
-                known_artifact = session.scalar(
-                    select(RawArtifact.id).where(
-                        RawArtifact.source == "cisa_kev",
-                        RawArtifact.sha256 == artifact.sha256,
-                    )
-                )
-                previous_artifact = None
-                if known_artifact is None:
-                    previous_artifact = session.scalar(
-                        select(RawArtifact)
-                        .where(
-                            RawArtifact.source == "cisa_kev",
-                            RawArtifact.request_mode.in_(["snapshot", "git_history"]),
-                            RawArtifact.sha256 != artifact.sha256,
-                        )
-                        .order_by(
-                            func.coalesce(
-                                RawArtifact.requested_start, RawArtifact.last_seen_at
-                            ).desc()
-                        )
-                        .limit(1)
-                    )
-                record_artifact(
-                    session,
-                    artifact,
-                    acquired_at,
-                    request_mode="snapshot",
-                    record_count=len(records),
-                    ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
-                    additional_locations=(replica,) if replica is not None else (),
-                )
-                changes = []
-                if known_artifact is None:
-                    previous = None
-                    if previous_artifact is not None:
-                        previous = {
-                            record["cve_id"]: json_safe_record(record)
-                            for record in parse_catalog(
-                                raw_store.read(
-                                    artifact_location_uri(previous_artifact, raw_store.backend)
-                                )
-                            )
-                        }
-                    current = {record["cve_id"]: json_safe_record(record) for record in records}
-                    changes = calculate_changes(
-                        previous,
-                        current,
-                        commit_sha=artifact.sha256,
-                        committed_at=acquired_at,
-                        revision_type="content_sha256",
-                    )
-                    upsert_changes(session, changes)
-                inserted, updated = upsert_records(session, records)
-                session.flush()
-        result = IngestionResult(
-            "cisa_kev",
-            acquired_at,
-            artifact.uri,
-            artifact.sha256,
-            len(content),
-            len(records),
-            inserted,
-            updated,
-            len(changes),
-        )
-        LOGGER.info("CISA KEV ingestion finished", extra=asdict(result))
-        return result
-    finally:
-        engine.dispose()
-
-
-def backfill_cisa_kev(
-    start_date: date,
-    end_date: date,
-    *,
-    client: CisaGitHistoryClient | None = None,
-    settings: Settings | None = None,
-    raw_store: RawArtifactStore | None = None,
-    replica_store: RawArtifactStore | None = None,
-) -> CisaHistoryResult:
-    """Store validated official Git snapshots without regressing the current-state table."""
-    if start_date > end_date:
-        raise ValueError("CISA history start must not be after end")
-    settings = settings or Settings()
-    raw_store = raw_store or create_raw_artifact_store(settings)
-    token = settings.github_token.get_secret_value() if settings.github_token else None
-    client = client or CisaGitHistoryClient(
-        token=token,
-        connect_timeout=settings.http_connect_timeout,
-        read_timeout=settings.http_read_timeout,
-        retries=settings.http_retries,
-    )
-    commits = client.list_commits(start_date, end_date)
-    engine = create_engine(settings.database_url)
-    total_records = total_bytes = invalid_snapshots = 0
-    try:
-        with engine.connect() as connection:
-            completed_revisions = set(
-                connection.scalars(
-                    select(RawArtifact.source_revision).where(
-                        RawArtifact.source == "cisa_kev",
-                        RawArtifact.request_mode.in_(["git_history", "git_history_invalid"]),
-                        RawArtifact.source_revision.in_([commit.sha for commit in commits]),
-                    )
-                )
-            )
-        for commit in commits:
-            if commit.sha in completed_revisions:
-                LOGGER.info("stage=cisa_git_snapshot_skipped revision=%s", commit.sha)
-                continue
-            for attempt in range(settings.http_retries + 1):
-                content = client.fetch_snapshot(commit.sha)
-                acquired_at = datetime.now(UTC)
-                artifact = raw_store.store("cisa_kev", content, acquired_at, ".json")
-                try:
-                    records = parse_catalog(content)
-                except ValueError as exc:
-                    if attempt >= settings.http_retries:
-                        with engine.begin() as connection:
-                            from sqlalchemy.orm import Session
-
-                            with Session(bind=connection) as session:
-                                record_artifact(
-                                    session,
-                                    artifact,
-                                    acquired_at,
-                                    request_mode="git_history_invalid",
-                                    requested_start=commit.committed_at,
-                                    requested_end=commit.committed_at + timedelta(microseconds=1),
-                                    ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
-                                    source_revision=commit.sha,
-                                )
-                        total_bytes += len(content)
-                        invalid_snapshots += 1
-                        LOGGER.error(
-                            "stage=cisa_git_snapshot_invalid revision=%s attempts=%d "
-                            "skipped=true error=%s",
-                            commit.sha,
-                            attempt + 1,
-                            exc,
-                        )
-                        records = None
-                        break
-                    LOGGER.warning(
-                        "stage=cisa_git_snapshot_invalid revision=%s attempt=%d retrying=true",
-                        commit.sha,
-                        attempt + 1,
-                    )
-                    continue
-                break
-            if records is None:
-                continue
-            if replica_store is None:
-                replica_store = create_validated_replica_store(settings)
-            replica = replicate_validated_artifact(
-                replica_store,
-                artifact,
-                content,
-                acquired_at,
-                metadata={
-                    "request-mode": "git_history",
-                    "record-count": str(len(records)),
-                    "source-revision": commit.sha,
-                },
-            )
-            with engine.begin() as connection:
-                from sqlalchemy.orm import Session
-
-                with Session(bind=connection) as session:
-                    record_artifact(
-                        session,
-                        artifact,
-                        acquired_at,
-                        request_mode="git_history",
-                        requested_start=commit.committed_at,
-                        requested_end=commit.committed_at + timedelta(microseconds=1),
-                        record_count=len(records),
-                        ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
-                        source_revision=commit.sha,
-                        additional_locations=(replica,) if replica is not None else (),
-                    )
-            total_records += len(records)
-            total_bytes += len(content)
-            LOGGER.info(
-                "stage=cisa_git_snapshot revision=%s committed_at=%s records=%d",
-                commit.sha,
-                commit.committed_at.isoformat(),
-                len(records),
-            )
-    finally:
-        engine.dispose()
-    return CisaHistoryResult(
+        LOGGER.exception("stage=bronze_quarantined source=cisa_kev uri=%s", artifact.uri)
+        raise
+    artifact = raw_store.store(
         "cisa_kev",
-        start_date,
-        end_date,
-        len(commits),
-        total_records,
-        total_bytes,
-        invalid_snapshots,
+        content,
+        acquired_at,
+        ".json",
+        metadata={
+            "request-mode": "snapshot",
+            "record-count": str(len(records)),
+        },
     )
+    result = IngestionResult(
+        "cisa_kev",
+        acquired_at,
+        artifact.uri,
+        artifact.sha256,
+        len(content),
+        len(records),
+        len(records),
+        artifact.created,
+    )
+    LOGGER.info("CISA KEV ingestion finished", extra=asdict(result))
+    return result
 
 
 if __name__ == "__main__":

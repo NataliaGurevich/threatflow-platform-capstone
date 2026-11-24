@@ -36,6 +36,17 @@ locals {
         ]
         Resource = local.object_arn
       },
+      {
+        Sid      = "ResolveMissingNvdCheckpoint"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = [aws_s3_bucket.bronze.arn]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["${var.bronze_prefix}/_control/nvd/*"]
+          }
+        }
+      },
     ]
   })
 }

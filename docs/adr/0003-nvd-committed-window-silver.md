@@ -18,7 +18,9 @@ Publishing Silver from those notifications could make an incomplete response app
 After all pages pass structural, pagination, count, parsing, and duplicate validation, ingestion
 publishes one immutable `.window.json` Bronze commit marker. It contains the mode and UTC bounds
 plus every page's ordered start index, record count, SHA-256, S3 key, VersionId, and size. Only this
-suffix is routed through S3 → SQS → Lambda.
+suffix is routed through S3 → SQS → Lambda. Its acquisition timestamp is the greatest original
+`acquired-at` value among the referenced content-addressed pages. Therefore, an identical retry
+reuses the same window marker instead of producing a new marker from the retry's wall-clock time.
 
 Lambda reads the window and pages by exact VersionId, repeats fail-closed validation, deduplicates
 by CVE while preserving the greatest NVD `lastModified`, and writes one immutable Parquet window.

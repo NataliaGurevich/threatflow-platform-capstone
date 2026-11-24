@@ -42,7 +42,11 @@ Both storage modules configure:
 - no public access.
 
 Bronze retains noncurrent versions for 90 days by default and exposes ingestion object read/write
-access only under `bronze/*`, without object deletion. The Lambda role is narrower: it can only
+access only under `bronze/*`, without object deletion. Its bucket-level `ListBucket` grant is
+restricted to `bronze/_control/nvd/*`, allowing a missing NVD checkpoint to return `NoSuchKey`
+without exposing source or quarantine listings. Rejected source payloads are stored under
+`bronze/_quarantine/*`; notification filters only match accepted `bronze/source=...` keys, so a
+quarantined response cannot trigger Silver. The Lambda role is narrower: it can only
 read exact object versions under `bronze/source=epss/*`. Silver retains noncurrent versions for 30
 days by default and publishes committed datasets under `silver/*`; the Lambda can only read and
 write `silver/epss_scores/*`. NVD has a separate role restricted to exact versions under

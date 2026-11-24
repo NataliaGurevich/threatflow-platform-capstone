@@ -34,6 +34,8 @@ epss_silver_lambda_reserved_concurrency = -1
 epss_silver_lambda_log_retention_days   = 30
 epss_silver_event_source_mapping_enabled     = true
 epss_silver_event_source_maximum_concurrency = 2
+# Exact-date DQ exceptions only after an investigated upstream anomaly.
+epss_minimum_count_overrides = {}
 
 cisa_silver_lambda_image_uri              = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/threatflow-cisa-silver-dev@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 cisa_silver_event_source_mapping_enabled  = false

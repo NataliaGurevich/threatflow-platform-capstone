@@ -16,20 +16,6 @@ dependencies = [
 
 [project.scripts]
 threatflow-backfill-range = "threatflow.orchestration.backfill_controller:main"
-threatflow-backfill-status = "threatflow.orchestration.backfill_status:main"
-threatflow-build-cisa-changes = "threatflow.derivations.cisa_changes:main"
-threatflow-watch-cisa = "threatflow.ingestion.cisa_watcher:main"
-threatflow-backup-databases = "threatflow.database_backup:main"
-threatflow-reconcile-raw-storage = "threatflow.raw_storage_reconciliation:main"
-threatflow-restore-raw-artifact = "threatflow.raw_storage_restore:main"
-threatflow-build-epss-silver = "threatflow.transformation.epss_silver:main"
-threatflow-bootstrap-epss-silver = "threatflow.transformation.epss_silver_bootstrap:main"
-threatflow-bootstrap-cisa-silver = "threatflow.transformation.cisa_silver_bootstrap:main"
-threatflow-publish-cisa-silver = "threatflow.transformation.cisa_silver_publish:main"
-threatflow-reconcile-nvd-silver = "threatflow.transformation.nvd_silver_reconciliation:main"
-threatflow-bootstrap-nvd-silver = "threatflow.transformation.nvd_silver_bootstrap:main"
-threatflow-publish-nvd-silver = "threatflow.transformation.nvd_silver_publish:main"
-threatflow-build-reconstructed-gold = "threatflow.gold.local_reconstructed:main"
 threatflow-sync-gold-catalog = "threatflow.gold.catalog:main"
 threatflow-deploy-athena-views = "threatflow.gold.athena_views:main"
 

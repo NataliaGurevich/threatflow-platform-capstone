@@ -34,7 +34,7 @@ check_airflow_imports() {
 }
 
 run_required "Ruff" .venv/bin/python -m ruff check .
-run_required "Unit and orchestration tests" .venv/bin/python -m pytest -q tests/unit tests/airflow/test_backfill_controller.py tests/airflow/test_backfill_status.py tests/airflow/test_orchestration.py
+run_required "Unit and orchestration tests" .venv/bin/python -m pytest -q tests/unit tests/airflow/test_backfill_controller.py tests/airflow/test_orchestration.py
 run_required "Compose configuration" docker compose config -q
 
 echo

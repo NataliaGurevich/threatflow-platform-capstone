@@ -144,6 +144,20 @@ variable "epss_silver_event_source_maximum_concurrency" {
   default     = 2
 }
 
+variable "epss_minimum_count_overrides" {
+  description = "Investigated EPSS date exceptions; empty by default and applied to ingestion and Silver."
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for score_date, count in var.epss_minimum_count_overrides :
+      can(regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", score_date)) && count >= 1 && floor(count) == count
+    ])
+    error_message = "epss_minimum_count_overrides must map ISO dates to positive integer counts."
+  }
+}
+
 variable "cisa_silver_lambda_image_uri" {
   description = "Immutable ECR image URI for the CISA Silver Lambda."
   type        = string

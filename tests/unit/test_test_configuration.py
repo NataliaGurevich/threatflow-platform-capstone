@@ -12,7 +12,6 @@ from threatflow.raw_storage import create_raw_artifact_store
 def test_hidden_settings_factory_ignores_working_directory_dotenv(tmp_path, monkeypatch) -> None:
     (tmp_path / ".env").write_text(
         "THREATFLOW_RAW_STORAGE_BACKEND=s3\n"
-        "THREATFLOW_S3_REPLICATION_ENABLED=true\n"
         "THREATFLOW_S3_BRONZE_BUCKET=must-not-be-read\n"
     )
     monkeypatch.chdir(tmp_path)

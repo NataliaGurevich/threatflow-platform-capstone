@@ -1,5 +1,6 @@
 """Environment-backed application settings."""
 
+from datetime import date
 from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
@@ -17,17 +18,18 @@ class Settings(BaseSettings):
     raw_storage_backend: Literal["local", "s3"] = "local"
     raw_data_dir: str = "data/raw"
     silver_data_dir: str = "data/silver"
-    s3_replication_enabled: bool = False
     s3_bronze_bucket: str | None = None
     s3_bronze_prefix: str = "bronze"
     s3_silver_bucket: str | None = None
     s3_silver_prefix: str = "silver"
     aws_region: str | None = None
     nvd_api_key: SecretStr | None = None
-    github_token: SecretStr | None = None
     nvd_api_base_url: str = "https://services.nvd.nist.gov/rest/json/cves/2.0"
     nvd_modified_lookback_hours: int = 48
     nvd_page_size: int = 2000
+    cisa_minimum_record_count: int = Field(default=100, ge=1)
+    cisa_minimum_previous_ratio: float = Field(default=0.8, gt=0, le=1)
+    epss_minimum_count_overrides: dict[date, int] = Field(default_factory=dict)
     epss_history_retention_days: int = Field(default=30, ge=1)
     airflow_metadata_retention_days: int = Field(default=90, ge=1)
     airflow_xcom_retention_days: int = Field(default=30, ge=1)
@@ -37,18 +39,17 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_raw_storage_settings(self) -> "Settings":
-        if (self.raw_storage_backend == "s3" or self.s3_replication_enabled) and not (
-            self.s3_bronze_bucket
-        ):
-            raise ValueError(
-                "s3_bronze_bucket is required for the S3 backend or S3 replication"
-            )
-        if self.s3_replication_enabled and self.raw_storage_backend != "local":
-            raise ValueError("S3 replication requires raw_storage_backend='local'")
+        if self.raw_storage_backend == "s3" and not self.s3_bronze_bucket:
+            raise ValueError("s3_bronze_bucket is required for the S3 backend")
         if not self.s3_bronze_prefix.strip("/"):
             raise ValueError("s3_bronze_prefix must contain at least one non-slash character")
         if not self.s3_silver_prefix.strip("/"):
             raise ValueError("s3_silver_prefix must contain at least one non-slash character")
+        if any(
+            type(count) is not int or count < 1
+            for count in self.epss_minimum_count_overrides.values()
+        ):
+            raise ValueError("epss_minimum_count_overrides values must be positive integers")
         return self
 
     @property

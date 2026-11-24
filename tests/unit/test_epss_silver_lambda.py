@@ -2,6 +2,7 @@ import base64
 import gzip
 import json
 import logging
+from datetime import date
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -47,6 +48,19 @@ def raw() -> bytes:
         ),
         mtime=0,
     )
+
+
+def test_config_reads_exact_date_completeness_overrides(monkeypatch):
+    monkeypatch.setenv("THREATFLOW_S3_BRONZE_BUCKET", BRONZE_BUCKET)
+    monkeypatch.setenv("THREATFLOW_S3_SILVER_BUCKET", SILVER_BUCKET)
+    monkeypatch.setenv(
+        "THREATFLOW_EPSS_MINIMUM_COUNT_OVERRIDES",
+        '{"2021-04-14":49000}',
+    )
+
+    assert EpssSilverLambdaConfig.from_environment().minimum_count_overrides == {
+        date(2021, 4, 14): 49_000
+    }
 
 
 def load_event() -> dict:
@@ -149,7 +163,9 @@ def test_fixture_processes_exact_bronze_version_and_reuses_committed_partition(
     content = raw()
     assert len(content) == 116
     assert sha256(content).hexdigest() in load_event()["Records"][0]["s3"]["object"]["key"]
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     client = MemoryS3(content)
     service = processor(client)
 
@@ -182,7 +198,9 @@ def test_fixture_processes_exact_bronze_version_and_reuses_committed_partition(
 
 
 def test_retry_recovers_when_parquet_exists_without_commit_manifest(monkeypatch) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     client = MemoryS3(raw())
     client.fail_manifest_once = True
     service = processor(client)
@@ -198,7 +216,9 @@ def test_retry_recovers_when_parquet_exists_without_commit_manifest(monkeypatch)
 
 
 def test_bronze_checksum_mismatch_never_writes_silver(monkeypatch) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     client = MemoryS3(raw() + b"corrupt")
 
     with pytest.raises(ValueError, match="integrity verification"):
@@ -216,7 +236,9 @@ def test_event_requires_version_id() -> None:
 
 
 def test_sqs_wrapper_reports_only_failed_messages(monkeypatch, caplog) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     service = processor(MemoryS3(raw()))
     monkeypatch.setattr(
         "threatflow.transformation.epss_silver_lambda._environment_processor",
@@ -256,7 +278,9 @@ def test_sqs_wrapper_reports_only_failed_messages(monkeypatch, caplog) -> None:
 
 
 def test_processing_failure_emits_structured_audit_event(monkeypatch, caplog) -> None:
-    monkeypatch.setattr(epss_silver, "validate_completeness", lambda *args: None)
+    monkeypatch.setattr(
+        epss_silver, "validate_completeness", lambda *args, **kwargs: None
+    )
     client = MemoryS3(raw() + b"corrupt")
 
     with caplog.at_level(logging.INFO):

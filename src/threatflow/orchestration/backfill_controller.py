@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
-from pathlib import Path
+from datetime import date
 from typing import TextIO
 
 import httpx
@@ -99,6 +97,13 @@ class AirflowClient:
         response.raise_for_status()
         return str(response.json()["state"]).lower()
 
+    def state_or_none(self, run_id: str) -> str | None:
+        response = self._client.get(f"/api/v2/dags/{DAG_ID}/dagRuns/{run_id}")
+        if response.status_code == httpx.codes.NOT_FOUND:
+            return None
+        response.raise_for_status()
+        return str(response.json()["state"]).lower()
+
 
 def validate_plan(plan: BackfillPlan) -> None:
     if not plan.sources or set(plan.sources) - {"nvd", "cisa", "epss"}:
@@ -122,107 +127,54 @@ def backfill_run_id(plan: BackfillPlan, window: BackfillWindow) -> str:
     return f"range-{plan.identity()}-{window.start:%Y%m%d}-{window.end:%Y%m%d}"
 
 
-def _read_checkpoint(path: Path, plan: BackfillPlan) -> set[str]:
-    if not path.exists():
-        return set()
-    data = json.loads(path.read_text())
-    if data.get("plan") != plan.serializable():
-        raise ValueError(f"checkpoint {path} belongs to a different backfill plan")
-    return set(data.get("completed_run_ids", []))
-
-
-def _write_checkpoint(
-    path: Path,
-    plan: BackfillPlan,
-    completed: set[str],
-    *,
-    active_run_id: str | None = None,
-    active_window: BackfillWindow | None = None,
-    active_state: str | None = None,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    payload: dict[str, object] = {
-        "plan": plan.serializable(),
-        "completed_run_ids": sorted(completed),
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    if active_run_id is not None and active_window is not None and active_state is not None:
-        payload["active"] = {
-            "run_id": active_run_id,
-            "start": active_window.start.isoformat(),
-            "end": active_window.end.isoformat(),
-            "state": active_state,
-        }
-    temporary.write_text(json.dumps(payload, indent=2) + "\n")
-    temporary.replace(path)
-
-
 def execute_plan(
     plan: BackfillPlan,
     airflow: AirflowClient,
-    checkpoint: Path,
     *,
     poll_seconds: float = 15,
     run_timeout_seconds: float = 12 * 60 * 60,
     output: TextIO,
 ) -> None:
     validate_plan(plan)
-    lock_path = checkpoint.with_suffix(checkpoint.suffix + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError(f"another controller is using {checkpoint}") from exc
-        completed = _read_checkpoint(checkpoint, plan)
-        windows = plan.windows()
-        for number, window in enumerate(windows, start=1):
-            run_id = backfill_run_id(plan, window)
-            if run_id in completed:
-                print(
-                    f"[{number}/{len(windows)}] already complete {window.start}..{window.end}",
-                    file=output,
-                )
-                continue
-            configuration = {
-                "sources": list(plan.sources),
-                "start_date": window.start.isoformat(),
-                "end_date": window.end.isoformat(),
-                "nvd_mode": plan.nvd_mode,
-                "chunk_days": plan.chunk_days,
-            }
-            print(f"[{number}/{len(windows)}] trigger {window.start}..{window.end}", file=output)
-            _write_checkpoint(
-                checkpoint,
-                plan,
-                completed,
-                active_run_id=run_id,
-                active_window=window,
-                active_state="submitting",
+    windows = plan.windows()
+    for number, window in enumerate(windows, start=1):
+        run_id = backfill_run_id(plan, window)
+        state = airflow.state_or_none(run_id)
+        if state == "success":
+            print(
+                f"[{number}/{len(windows)}] already complete {window.start}..{window.end}",
+                file=output,
             )
+            continue
+        if state == "failed":
+            raise RuntimeError(f"Airflow run {run_id} finished with state=failed")
+        configuration = {
+            "sources": list(plan.sources),
+            "start_date": window.start.isoformat(),
+            "end_date": window.end.isoformat(),
+            "nvd_mode": plan.nvd_mode,
+            "chunk_days": plan.chunk_days,
+        }
+        if state is None:
+            print(f"[{number}/{len(windows)}] trigger {window.start}..{window.end}", file=output)
             airflow.trigger(run_id, configuration)
-            deadline = time.monotonic() + run_timeout_seconds
-            while True:
-                state = airflow.state(run_id)
-                if state == "success":
-                    completed.add(run_id)
-                    _write_checkpoint(checkpoint, plan, completed)
-                    break
-                _write_checkpoint(
-                    checkpoint,
-                    plan,
-                    completed,
-                    active_run_id=run_id,
-                    active_window=window,
-                    active_state=state,
-                )
-                if state == "failed":
-                    raise RuntimeError(f"Airflow run {run_id} finished with state={state}")
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Airflow run {run_id} did not finish before timeout")
-                time.sleep(poll_seconds)
-            print(f"[{number}/{len(windows)}] success {window.start}..{window.end}", file=output)
+        else:
+            print(
+                f"[{number}/{len(windows)}] resume state={state} "
+                f"{window.start}..{window.end}",
+                file=output,
+            )
+        deadline = time.monotonic() + run_timeout_seconds
+        while True:
+            state = airflow.state(run_id)
+            if state == "success":
+                break
+            if state == "failed":
+                raise RuntimeError(f"Airflow run {run_id} finished with state={state}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Airflow run {run_id} did not finish before timeout")
+            time.sleep(poll_seconds)
+        print(f"[{number}/{len(windows)}] success {window.start}..{window.end}", file=output)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -241,7 +193,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--username", default=os.getenv("AIRFLOW_ADMIN_USERNAME", "admin"))
     parser.add_argument("--password", default=os.getenv("AIRFLOW_ADMIN_PASSWORD"))
-    parser.add_argument("--checkpoint", type=Path, default=Path("data/backfill-checkpoint.json"))
     parser.add_argument("--poll-seconds", type=float, default=15)
     parser.add_argument("--run-timeout-hours", type=float, default=12)
     parser.add_argument("--dry-run", action="store_true")
@@ -284,7 +235,6 @@ def main() -> None:
         execute_plan(
             plan,
             airflow,
-            args.checkpoint,
             poll_seconds=args.poll_seconds,
             run_timeout_seconds=args.run_timeout_hours * 60 * 60,
             output=sys.stdout,

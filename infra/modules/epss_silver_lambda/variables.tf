@@ -88,6 +88,20 @@ variable "silver_prefix" {
   }
 }
 
+variable "minimum_count_overrides" {
+  description = "Explicit score_date to minimum row-count exceptions for investigated EPSS source anomalies."
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for score_date, count in var.minimum_count_overrides :
+      can(regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", score_date)) && count >= 1 && floor(count) == count
+    ])
+    error_message = "minimum_count_overrides must map ISO dates to positive integer counts."
+  }
+}
+
 variable "memory_size_mb" {
   description = "Memory allocated to the PyArrow transformation Lambda."
   type        = number
@@ -171,7 +185,7 @@ variable "reserved_concurrent_executions" {
 variable "log_retention_days" {
   description = "CloudWatch log retention in days."
   type        = number
-  default     = 14
+  default     = 30
 
   validation {
     condition = contains(

@@ -13,13 +13,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${THREATFLOW_POSTGRES_USER:-threatflow}:${THREATFLOW_POSTGRES_PASSWORD:?Set THREATFLOW_POSTGRES_PASSWORD in .env}@postgres:5432/airflow
-    THREATFLOW_POSTGRES_HOST: postgres
-    THREATFLOW_POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
-    THREATFLOW_RAW_DATA_DIR: /opt/threatflow/data/raw
+    THREATFLOW_RAW_STORAGE_BACKEND: s3
   volumes:
     - ./airflow/dags:/opt/airflow/dags:ro
     - ./airflow/scripts:/opt/airflow/scripts:ro
-    - ./data/raw:/opt/threatflow/data/raw
     - airflow_logs:/opt/airflow/logs
     - airflow_auth:/opt/airflow/auth
   depends_on:
@@ -32,7 +29,7 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
+      POSTGRES_DB: postgres
       POSTGRES_USER: ${THREATFLOW_POSTGRES_USER:-threatflow}
       POSTGRES_PASSWORD: ${THREATFLOW_POSTGRES_PASSWORD:?Set THREATFLOW_POSTGRES_PASSWORD in .env}
     ports:
@@ -42,7 +39,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+        - pg_isready -U $${POSTGRES_USER} -d postgres
       interval: 5s
       timeout: 5s
       retries: 10
@@ -55,14 +52,9 @@ services:
       PGPASSWORD: ${THREATFLOW_POSTGRES_PASSWORD:?Set THREATFLOW_POSTGRES_PASSWORD in .env}
       PGDATABASE: postgres
 
-      THREATFLOW_POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
-
       METABASE_DB_NAME: ${METABASE_DB_NAME:-metabase}
       METABASE_DB_USER: ${METABASE_DB_USER:-metabase_user}
       METABASE_DB_PASSWORD: ${METABASE_DB_PASSWORD:?Set METABASE_DB_PASSWORD in .env}
-
-      THREATFLOW_ANALYTICS_USER: ${THREATFLOW_ANALYTICS_USER:-threatflow_analytics}
-      THREATFLOW_ANALYTICS_PASSWORD: ${THREATFLOW_ANALYTICS_PASSWORD:?Set THREATFLOW_ANALYTICS_PASSWORD in .env}
     volumes:
       - ./postgres/init-metabase.sh:/opt/threatflow/init-metabase.sh:ro
     command:
@@ -109,7 +101,7 @@ services:
       PGHOST: postgres
       PGUSER: ${THREATFLOW_POSTGRES_USER:-threatflow}
       PGPASSWORD: ${THREATFLOW_POSTGRES_PASSWORD:?Set THREATFLOW_POSTGRES_PASSWORD in .env}
-      PGDATABASE: ${THREATFLOW_POSTGRES_DB:-threatflow}
+      PGDATABASE: postgres
     command:
       - sh
       - -c
@@ -127,8 +119,6 @@ services:
       airflow-db-init:
         condition: service_completed_successfully
       airflow-auth-init:
-        condition: service_completed_successfully
-      threatflow-migrate:
         condition: service_completed_successfully
     command:
       - bash
@@ -196,17 +186,6 @@ services:
       timeout: 10s
       retries: 5
 
-  threatflow-migrate:
-    <<: *airflow-common
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      - bash
-      - -c
-      - cd /opt/threatflow && /opt/threatflow-venv/bin/alembic -c /opt/threatflow/alembic.ini upgrade head
-    restart: 'no'
-
   airflow-maintenance:
     <<: *airflow-common
     command:
@@ -227,13 +206,8 @@ services:
       AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
       AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?Set AIRFLOW_ADMIN_PASSWORD in .env}
       THREATFLOW_AIRFLOW_URL: http://airflow-api-server:8080
-      THREATFLOW_BACKUP_DIR: /opt/threatflow/data/backups
-      THREATFLOW_POSTGRES_HOST: postgres
-      THREATFLOW_POSTGRES_DB: ${THREATFLOW_POSTGRES_DB:-threatflow}
-      THREATFLOW_RAW_DATA_DIR: /opt/threatflow/data/raw
     volumes:
       - ./airflow/scripts:/opt/airflow/scripts:ro
-      - ./data:/opt/threatflow/data
     depends_on:
       airflow-api-server:
         condition: service_healthy

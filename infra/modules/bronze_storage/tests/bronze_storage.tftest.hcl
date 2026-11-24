@@ -74,9 +74,11 @@ run "creates_protected_bronze_storage" {
       strcontains(aws_iam_policy.bronze_access.policy, "s3:PutObject") &&
       strcontains(aws_iam_policy.bronze_access.policy, "s3:GetObject") &&
       !strcontains(aws_iam_policy.bronze_access.policy, "s3:DeleteObject") &&
-      !strcontains(aws_iam_policy.bronze_access.policy, "s3:ListBucket")
+      jsondecode(aws_iam_policy.bronze_access.policy).Statement[1].Action == ["s3:ListBucket"] &&
+      jsondecode(aws_iam_policy.bronze_access.policy).Statement[1].Resource == [aws_s3_bucket.bronze.arn] &&
+      jsondecode(aws_iam_policy.bronze_access.policy).Statement[1].Condition.StringLike["s3:prefix"] == ["bronze/_control/nvd/*"]
     )
-    error_message = "Runtime policy must provide read/write but not delete access."
+    error_message = "Runtime policy must provide object read/write and prefix-scoped NVD checkpoint discovery without delete access."
   }
 }
 

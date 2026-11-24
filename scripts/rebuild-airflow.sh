@@ -42,7 +42,39 @@ require_command() {
 require_command docker
 require_command shasum
 
+configure_spark_java() {
+  local java_home="${THREATFLOW_TEST_JAVA_HOME:-}"
+  if [[ -z "$java_home" && -x /usr/libexec/java_home ]]; then
+    java_home="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+  fi
+  if [[ -z "$java_home" && -n "${JAVA_HOME:-}" ]]; then
+    java_home="$JAVA_HOME"
+  fi
+  if [[ -z "$java_home" || ! -x "$java_home/bin/java" ]]; then
+    echo "error: JDK 21 is required for local PySpark tests; install it or set THREATFLOW_TEST_JAVA_HOME" >&2
+    exit 1
+  fi
+
+  local java_specification_version
+  java_specification_version="$(
+    "$java_home/bin/java" -XshowSettings:properties -version 2>&1 |
+      awk -F= '/^[[:space:]]*java\.specification\.version =/ {gsub(/[[:space:]]/, "", $2); print $2}'
+  )"
+  if [[ "$java_specification_version" != "21" ]]; then
+    echo "error: local PySpark tests require JDK 21, found ${java_specification_version:-unknown} at $java_home" >&2
+    echo "error: set THREATFLOW_TEST_JAVA_HOME to a JDK 21 installation" >&2
+    exit 1
+  fi
+
+  export JAVA_HOME="$java_home"
+  export PATH="$JAVA_HOME/bin:$PATH"
+  export PYSPARK_PYTHON="$project_root/.venv/bin/python"
+  export PYSPARK_DRIVER_PYTHON="$project_root/.venv/bin/python"
+  echo "==> Using JDK ${java_specification_version} for PySpark tests: $JAVA_HOME"
+}
+
 if [[ "$skip_tests" == false ]]; then
+  configure_spark_java
   echo "==> Running Ruff"
   .venv/bin/python -m ruff check .
   echo "==> Running unit and Airflow tests"

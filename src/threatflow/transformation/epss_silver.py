@@ -97,6 +97,7 @@ def transform_epss_bytes(
     expected_record_count: int | None,
     output_root: str | Path,
     source_version_id: str | None = None,
+    minimum_count_override: int | None = None,
 ) -> EpssSilverResult:
     """Validate exact EPSS Raw bytes and publish one committed Parquet partition."""
     if not _SHA256.fullmatch(source_sha256):
@@ -131,7 +132,11 @@ def transform_epss_bytes(
             f"EPSS manifest count mismatch: expected {expected_record_count}, "
             f"parsed {len(records)}"
         )
-    validate_completeness(len(records), score_date)
+    validate_completeness(
+        len(records),
+        score_date,
+        minimum_count_override=minimum_count_override,
+    )
     record_count = len(records)
 
     if manifest_path.exists():

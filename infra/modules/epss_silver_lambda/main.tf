@@ -119,11 +119,12 @@ resource "aws_lambda_function" "this" {
 
   environment {
     variables = {
-      THREATFLOW_AWS_REGION       = var.aws_region
-      THREATFLOW_S3_BRONZE_BUCKET = var.bronze_bucket_name
-      THREATFLOW_S3_BRONZE_PREFIX = var.bronze_prefix
-      THREATFLOW_S3_SILVER_BUCKET = var.silver_bucket_name
-      THREATFLOW_S3_SILVER_PREFIX = var.silver_prefix
+      THREATFLOW_AWS_REGION                   = var.aws_region
+      THREATFLOW_S3_BRONZE_BUCKET             = var.bronze_bucket_name
+      THREATFLOW_S3_BRONZE_PREFIX             = var.bronze_prefix
+      THREATFLOW_S3_SILVER_BUCKET             = var.silver_bucket_name
+      THREATFLOW_S3_SILVER_PREFIX             = var.silver_prefix
+      THREATFLOW_EPSS_MINIMUM_COUNT_OVERRIDES = jsonencode(var.minimum_count_overrides)
     }
   }
 

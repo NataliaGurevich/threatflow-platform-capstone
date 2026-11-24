@@ -1,5 +1,5 @@
 import base64
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 
@@ -14,7 +14,6 @@ from threatflow.config import Settings
 from threatflow.raw_storage import (
     RawArtifactRef,
     create_raw_artifact_store,
-    create_validated_replica_store,
 )
 from threatflow.s3_raw_storage import RawArtifactIntegrityError, S3RawArtifactStore
 
@@ -36,7 +35,7 @@ def _client():
     )
 
 
-def _put_parameters() -> dict:
+def _put_parameters(acquired_at: datetime = ACQUIRED_AT) -> dict:
     return {
         "Bucket": BUCKET,
         "Key": KEY,
@@ -47,7 +46,7 @@ def _put_parameters() -> dict:
         "Metadata": {
             "sha256": DIGEST,
             "source": "nvd",
-            "acquired-at": "2026-11-10T12:00:00+00:00",
+            "acquired-at": acquired_at.astimezone(UTC).isoformat(),
         },
         "ServerSideEncryption": "AES256",
         "IfNoneMatch": "*",
@@ -63,6 +62,7 @@ def _head_parameters(*, version_id: str | None = None) -> dict:
 
 def _head_response(**overrides) -> dict:
     response = {
+        "ETag": '"etag-version-1"',
         "ContentLength": len(CONTENT),
         "ContentType": "application/json",
         "ChecksumSHA256": CHECKSUM,
@@ -96,25 +96,28 @@ def test_store_creates_content_addressed_object_and_verifies_head() -> None:
     assert artifact.object_key == KEY
     assert artifact.version_id == "version-1"
     assert artifact.sha256 == DIGEST
+    assert artifact.first_acquired_at == ACQUIRED_AT
 
 
 def test_store_reuses_only_an_existing_object_with_matching_integrity() -> None:
     client = _client()
+    retry_acquired_at = ACQUIRED_AT + timedelta(hours=1)
     with Stubber(client) as stubber:
         stubber.add_client_error(
             "put_object",
             service_error_code="PreconditionFailed",
             service_message="object already exists",
             http_status_code=412,
-            expected_params=_put_parameters(),
+            expected_params=_put_parameters(retry_acquired_at),
         )
         stubber.add_response("head_object", _head_response(), _head_parameters())
         artifact = S3RawArtifactStore(BUCKET, client=client).store(
-            "nvd", CONTENT, ACQUIRED_AT, "json"
+            "nvd", CONTENT, retry_acquired_at, "json"
         )
 
     assert artifact.created is False
     assert artifact.version_id == "version-1"
+    assert artifact.first_acquired_at == ACQUIRED_AT
 
 
 def test_store_rejects_existing_object_with_wrong_checksum() -> None:
@@ -152,6 +155,85 @@ def test_store_persists_and_verifies_source_routing_metadata() -> None:
             "nvd", CONTENT, ACQUIRED_AT, "json", metadata=metadata
         )
     assert artifact.created is True
+
+
+def test_store_repairs_missing_routing_metadata_on_verified_legacy_object() -> None:
+    client = _client()
+    metadata = {
+        "request-mode": "score_date",
+        "score-date": "2026-11-10",
+        "record-count": "1",
+    }
+    put = _put_parameters()
+    put["Metadata"] = {**put["Metadata"], **metadata}
+    repaired_head = _head_response(
+        ETag='"etag-version-2"',
+        Metadata=put["Metadata"],
+        VersionId="version-2",
+    )
+    with Stubber(client) as stubber:
+        stubber.add_client_error(
+            "put_object",
+            service_error_code="PreconditionFailed",
+            service_message="object already exists",
+            http_status_code=412,
+            expected_params=put,
+        )
+        stubber.add_response("head_object", _head_response(), _head_parameters())
+        stubber.add_response(
+            "copy_object",
+            {"VersionId": "version-2"},
+            {
+                "Bucket": BUCKET,
+                "Key": KEY,
+                "CopySource": {
+                    "Bucket": BUCKET,
+                    "Key": KEY,
+                    "VersionId": "version-1",
+                },
+                "CopySourceIfMatch": '"etag-version-1"',
+                "Metadata": put["Metadata"],
+                "MetadataDirective": "REPLACE",
+                "ContentType": "application/json",
+                "ChecksumAlgorithm": "SHA256",
+                "ServerSideEncryption": "AES256",
+            },
+        )
+        stubber.add_response(
+            "head_object",
+            repaired_head,
+            _head_parameters(version_id="version-2"),
+        )
+        artifact = S3RawArtifactStore(BUCKET, client=client).store(
+            "nvd", CONTENT, ACQUIRED_AT, "json", metadata=metadata
+        )
+
+    assert artifact.created is True
+    assert artifact.version_id == "version-2"
+
+
+def test_store_rejects_conflicting_existing_routing_metadata() -> None:
+    client = _client()
+    requested_metadata = {"record-count": "2"}
+    put = _put_parameters()
+    put["Metadata"] = {**put["Metadata"], **requested_metadata}
+    existing_metadata = {**_put_parameters()["Metadata"], "record-count": "1"}
+    with Stubber(client) as stubber:
+        stubber.add_client_error(
+            "put_object",
+            service_error_code="PreconditionFailed",
+            http_status_code=412,
+            expected_params=put,
+        )
+        stubber.add_response(
+            "head_object",
+            _head_response(Metadata=existing_metadata),
+            _head_parameters(),
+        )
+        with pytest.raises(RawArtifactIntegrityError, match="Metadata.record-count"):
+            S3RawArtifactStore(BUCKET, client=client).store(
+                "nvd", CONTENT, ACQUIRED_AT, "json", metadata=requested_metadata
+            )
 
 
 def test_store_rejects_reserved_source_routing_metadata() -> None:
@@ -263,27 +345,3 @@ def test_s3_settings_require_bucket_and_factory_builds_s3_store(monkeypatch) -> 
     assert store.bucket == BUCKET
     assert store.prefix == "bronze"
     assert store.client is fake_client
-
-
-def test_replication_settings_require_local_primary_and_build_s3_target(monkeypatch) -> None:
-    with pytest.raises(ValidationError, match="s3_bronze_bucket"):
-        Settings(s3_replication_enabled=True, _env_file=None)
-    with pytest.raises(ValidationError, match="raw_storage_backend='local'"):
-        Settings(
-            raw_storage_backend="s3",
-            s3_replication_enabled=True,
-            s3_bronze_bucket=BUCKET,
-            _env_file=None,
-        )
-
-    fake_client = object()
-    monkeypatch.setattr(
-        "threatflow.s3_raw_storage.boto3.client", lambda *args, **kwargs: fake_client
-    )
-    store = create_validated_replica_store(
-        Settings(s3_replication_enabled=True, s3_bronze_bucket=BUCKET, _env_file=None)
-    )
-
-    assert isinstance(store, S3RawArtifactStore)
-    assert store.client is fake_client
-    assert create_validated_replica_store(Settings(_env_file=None)) is None

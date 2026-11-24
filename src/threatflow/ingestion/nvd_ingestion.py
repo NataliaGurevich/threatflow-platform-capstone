@@ -3,23 +3,17 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-
-from sqlalchemy import create_engine
 
 from threatflow.config import Settings
 from threatflow.ingestion.nvd_client import NvdClient
 from threatflow.ingestion.nvd_parser import parse_response
 from threatflow.raw_storage import (
     RawArtifactStore,
+    create_quarantine_artifact_store,
     create_raw_artifact_store,
-    create_validated_replica_store,
-    replicate_validated_artifact,
 )
-from threatflow.repository.nvd_repository import upsert_records
-from threatflow.repository.raw_artifact_repository import record_artifact
 from threatflow.transformation.nvd_window import (
     build_nvd_window_manifest,
     publish_nvd_window_manifest,
@@ -39,8 +33,9 @@ class NvdIngestionResult:
     raw_artifacts: tuple[str, ...]
     total_records_received: int
     unique_records_processed: int
-    inserted_records: int
-    updated_records: int
+    records_accepted: int
+    bronze_objects_created: int
+    bronze_objects_reused: int
     rejected_count: int
     window_manifest_uri: str | None = None
     window_manifest_sha256: str | None = None
@@ -68,12 +63,14 @@ def ingest_nvd_cves(
     end: datetime | None = None,
     mode: str = "modified",
     raw_store: RawArtifactStore | None = None,
-    replica_store: RawArtifactStore | None = None,
+    quarantine_store: RawArtifactStore | None = None,
 ) -> NvdIngestionResult:
     if mode not in {"modified", "published"}:
         raise ValueError("NVD mode must be modified or published")
     settings = settings or Settings()
     raw_store = raw_store or create_raw_artifact_store(settings)
+    if raw_store.backend != "s3":
+        raise ValueError("NVD ingestion requires the S3 Bronze backend")
     acquired_at = datetime.now(UTC)
     end = end or acquired_at
     start = start or end - timedelta(hours=settings.nvd_modified_lookback_hours)
@@ -99,6 +96,7 @@ def ingest_nvd_cves(
             retries=settings.http_retries,
         )
     artifacts, artifact_pages, records = [], [], []
+    created_objects = reused_objects = 0
     total_bytes = total_received = 0
     index = 0
     expected_total = None
@@ -110,21 +108,40 @@ def ingest_nvd_cves(
             if mode == "modified"
             else client.fetch_page(start, end, index, mode=mode)
         )
+        try:
+            meta, page_records = parse_response(content)
+            if meta["startIndex"] != index or meta["resultsPerPage"] != len(page_records):
+                raise ValueError("NVD pagination metadata does not match requested page")
+            if expected_total is None:
+                expected_total = meta["totalResults"]
+            elif expected_total != meta["totalResults"]:
+                raise ValueError("NVD totalResults changed during pagination")
+        except ValueError:
+            quarantine_store = quarantine_store or create_quarantine_artifact_store(settings)
+            artifact = quarantine_store.store(
+                "nvd",
+                content,
+                acquired_at,
+                ".json",
+                metadata={
+                    "artifact-status": "quarantined",
+                    "failure-stage": "bronze-data-quality",
+                },
+            )
+            LOGGER.exception("stage=bronze_quarantined source=nvd uri=%s", artifact.uri)
+            raise
         artifact = raw_store.store("nvd", content, acquired_at, ".json")
+        if artifact.created:
+            created_objects += 1
+        else:
+            reused_objects += 1
         artifacts.append(artifact.uri)
+        artifact_pages.append((artifact, index, len(page_records)))
         total_bytes += len(content)
         LOGGER.info(
             "NVD page stored",
             extra={"page": page_number, "bytes": len(content), "sha256": artifact.sha256},
         )
-        meta, page_records = parse_response(content)
-        artifact_pages.append((artifact, index, len(page_records)))
-        if meta["startIndex"] != index or meta["resultsPerPage"] != len(page_records):
-            raise ValueError("NVD pagination metadata does not match requested page")
-        if expected_total is None:
-            expected_total = meta["totalResults"]
-        elif expected_total != meta["totalResults"]:
-            raise ValueError("NVD totalResults changed during pagination")
         total_received += len(page_records)
         records.extend(page_records)
         LOGGER.info(
@@ -145,64 +162,22 @@ def ingest_nvd_cves(
         if page_number > expected_total + 1:
             raise ValueError("NVD pagination safety limit exceeded")
     unique = _deduplicate(records)
-    if replica_store is None:
-        replica_store = create_validated_replica_store(settings)
-    replicas = (
-        [
-            replicate_validated_artifact(
-                replica_store,
-                artifact,
-                raw_store.read(artifact),
-                acquired_at,
-            )
-            for artifact, _, _ in artifact_pages
-        ]
-        if replica_store is not None
-        else [None] * len(artifact_pages)
+    window_acquired_at = max(
+        (artifact.first_acquired_at or acquired_at for artifact, _, _ in artifact_pages),
     )
-    s3_pages = [
-        (replica or artifact, page_start_index, record_count)
-        for (artifact, page_start_index, record_count), replica in zip(
-            artifact_pages, replicas, strict=True
-        )
-    ]
-    window_store = raw_store if raw_store.backend == "s3" else replica_store
-    window_artifact = None
-    if window_store is not None:
-        window_manifest = build_nvd_window_manifest(
-            mode=mode,
-            requested_start=start,
-            requested_end=end,
-            acquired_at=acquired_at,
-            total_results=expected_total or 0,
-            pages=s3_pages,
-        )
-        window_artifact = publish_nvd_window_manifest(window_store, window_manifest)
-    engine = create_engine(settings.database_url)
-    try:
-        with engine.begin() as connection:
-            from sqlalchemy.orm import Session
-
-            with Session(bind=connection) as session:
-                for (artifact, page_start_index, record_count), replica in zip(
-                    artifact_pages, replicas, strict=True
-                ):
-                    record_artifact(
-                        session,
-                        artifact,
-                        acquired_at,
-                        request_mode=mode,
-                        requested_start=start,
-                        requested_end=end,
-                        page_start_index=page_start_index,
-                        record_count=record_count,
-                        ingestion_run_id=os.getenv("AIRFLOW_CTX_DAG_RUN_ID"),
-                        additional_locations=(replica,) if replica is not None else (),
-                    )
-                inserted, updated = upsert_records(session, unique)
-                session.flush()
-    finally:
-        engine.dispose()
+    window_manifest = build_nvd_window_manifest(
+        mode=mode,
+        requested_start=start,
+        requested_end=end,
+        acquired_at=window_acquired_at,
+        total_results=expected_total or 0,
+        pages=artifact_pages,
+    )
+    window_artifact = publish_nvd_window_manifest(raw_store, window_manifest)
+    if window_artifact.created:
+        created_objects += 1
+    else:
+        reused_objects += 1
     result = NvdIngestionResult(
         "nvd",
         start,
@@ -213,12 +188,13 @@ def ingest_nvd_cves(
         tuple(artifacts),
         total_received,
         len(unique),
-        inserted,
-        updated,
+        len(unique),
+        created_objects,
+        reused_objects,
         0,
-        window_artifact.uri if window_artifact is not None else None,
-        window_artifact.sha256 if window_artifact is not None else None,
-        window_artifact.version_id if window_artifact is not None else None,
+        window_artifact.uri,
+        window_artifact.sha256,
+        window_artifact.version_id,
     )
     LOGGER.info("NVD ingestion finished", extra=asdict(result))
     return result

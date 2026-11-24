@@ -1,6 +1,5 @@
 """EPSS UPSERT behavior in an isolated PostgreSQL 17 container."""
 
-import gzip
 from datetime import date
 
 import pytest
@@ -10,8 +9,6 @@ from sqlalchemy.orm import Session
 from testcontainers.core.docker_client import DockerClient
 from testcontainers.postgres import PostgresContainer
 
-from threatflow.config import Settings
-from threatflow.ingestion import epss_ingestion
 from threatflow.models.base import Base
 from threatflow.models.epss import EpssCurrentScore, EpssDailySummary, EpssScore
 from threatflow.repository.epss_repository import prune_history, upsert_records, upsert_summary
@@ -115,69 +112,3 @@ def test_rollback_across_batches(session):
             )
     session.rollback()
     assert session.scalars(select(EpssScore)).all() == []
-
-
-def test_ingestion_service_current_and_historical_in_isolated_postgres(monkeypatch, tmp_path):
-    require_docker()
-    monkeypatch.setattr(epss_ingestion, "validate_completeness", lambda *args: None)
-
-    class Client:
-        def fetch(self, score_date):
-            day = score_date or date(2024, 1, 2)
-            csv = (
-                f"#model_version:v1,score_date:{day.isoformat()}T00:00:00Z\n"
-                "cve,epss,percentile\nCVE-2024-1234,0.1,0.5\n"
-            )
-            return gzip.compress(csv.encode())
-
-    with PostgresContainer("postgres:17-alpine") as postgres:
-        engine = create_engine(postgres.get_connection_url().replace("psycopg2", "psycopg"))
-        Base.metadata.create_all(engine)
-        monkeypatch.setattr(epss_ingestion, "create_engine", lambda _: engine)
-        settings = Settings(raw_data_dir=str(tmp_path), _env_file=None)
-        current = epss_ingestion.ingest_epss(client=Client(), settings=settings)
-        historic = epss_ingestion.ingest_epss(
-            client=Client(), settings=settings, score_date=date(2024, 1, 1)
-        )
-        assert current.score_date == date(2024, 1, 2)
-        assert historic.score_date == date(2024, 1, 1)
-        assert current.inserted_records == historic.inserted_records == 1
-        assert len(list(tmp_path.rglob("*.csv.gz"))) == 2
-        with Session(engine) as db:
-            assert len(db.scalars(select(EpssScore)).all()) == 2
-        engine.dispose()
-
-
-def test_old_ingestion_uses_summary_only_path(monkeypatch, tmp_path):
-    require_docker()
-    monkeypatch.setattr(epss_ingestion, "validate_completeness", lambda *args: None)
-
-    class Client:
-        def fetch(self, score_date):
-            csv = (
-                f"#model_version:v1,score_date:{score_date.isoformat()}T00:00:00Z\n"
-                "cve,epss,percentile\nCVE-2021-1234,0.2,0.5\n"
-            )
-            return gzip.compress(csv.encode())
-
-    with PostgresContainer("postgres:17-alpine") as postgres:
-        engine = create_engine(postgres.get_connection_url().replace("psycopg2", "psycopg"))
-        Base.metadata.create_all(engine)
-        with Session(engine) as db:
-            db.add(EpssCurrentScore(**row("CVE-2026-9999", date(2026, 11, 3))))
-            db.commit()
-        monkeypatch.setattr(epss_ingestion, "create_engine", lambda _: engine)
-
-        result = epss_ingestion.ingest_epss(
-            client=Client(),
-            settings=Settings(raw_data_dir=str(tmp_path), _env_file=None),
-            score_date=date(2021, 4, 14),
-        )
-
-        assert result.summary_only is True
-        assert result.inserted_records == result.updated_records == result.pruned_records == 0
-        with Session(engine) as db:
-            assert db.scalars(select(EpssScore)).all() == []
-            assert db.get(EpssDailySummary, date(2021, 4, 14)).record_count == 1
-            assert db.get(EpssCurrentScore, "CVE-2021-1234") is None
-        engine.dispose()

@@ -32,28 +32,25 @@ not claim that a specific organisation is vulnerable.
 - Airflow orchestration locally and EventBridge scheduling for AWS Gold;
 - Terraform-managed AWS infrastructure and CloudWatch observability.
 
-The local platform remains independently reproducible. The AWS development path extends it with
-object storage, event-driven transformations, serverless compute, Spark, and a serverless query
-layer.
+The local runtime is the orchestration and development control plane. Pipeline data is stored in
+AWS S3; local PostgreSQL is reserved for Airflow and Metabase metadata. Unit tests remain
+credential-free through local fixtures and stubbed AWS clients.
 
 ## Architecture and pipeline
 
 ```mermaid
 flowchart LR
     NVD[NVD API] --> INGEST[Python ingestion]
-    CISA[CISA KEV feed / Git] --> INGEST
+    CISA[CISA KEV current feed] --> INGEST
     EPSS[FIRST EPSS archive] --> INGEST
 
     AIRFLOW[Airflow schedules and backfills] --> INGEST
-    INGEST --> RAWLOCAL[Local immutable Raw]
-    INGEST --> PG[(PostgreSQL)]
     INGEST --> BRONZE[S3 Bronze]
+    INGEST --> QUARANTINE[S3 Bronze quarantine]
 
     BRONZE --> EVENTS[S3 events / SQS]
     EVENTS --> LAMBDA[Source-specific Lambda transforms]
-    BRONZE --> BOOTSTRAP[Controlled bootstrap / reconciliation]
     LAMBDA --> SILVER[S3 Silver Parquet]
-    BOOTSTRAP --> SILVER
 
     SCHEDULER[EventBridge Scheduler<br/>daily 09:00 Europe/Berlin] --> GLUE[Glue Spark Gold job]
     SILVER --> GLUE
@@ -73,11 +70,12 @@ flowchart LR
 1. Airflow invokes source-specific Python services for daily ingestion or validated historical
    backfills. Airflow owns scheduling and dependencies; HTTP, parsing, validation, and persistence
    remain in application modules.
-2. Exact accepted source bytes are stored immutably in Raw/Bronze. PostgreSQL keeps the local
-   current/history/control model and durable ingestion checkpoints.
+2. Exact accepted source bytes are stored immutably in S3 Bronze. Rejected source payloads are
+   written under the isolated S3 quarantine prefix and fail the Airflow task. The durable NVD
+   modified-window checkpoint is a conditionally updated S3 control object.
 3. Source-specific transformations validate and publish typed Parquet to Silver. S3 events and
-   SQS are used where event-driven processing is useful; controlled bootstrap and reconciliation
-   cover historical data and recovery.
+   SQS deliver committed Bronze objects to source-specific Lambda processors. Historical recovery
+   uses the same bounded Airflow ingestion and AWS publication path.
 4. A daily Glue Spark job resolves committed Silver inputs, builds the Gold detail and summary
    products, runs quality gates, and publishes a shared product commit last.
 5. The same successful Gold run registers the exact `snapshot_date` and `run_id` locations in
@@ -96,15 +94,13 @@ are content-addressed and identified by source plus SHA-256, for example:
 s3://<bronze-bucket>/bronze/source=nvd/sha256=<sha256>.json
 s3://<bronze-bucket>/bronze/source=cisa_kev/sha256=<sha256>.json
 s3://<bronze-bucket>/bronze/source=epss/sha256=<sha256>.csv.gz
+s3://<bronze-bucket>/bronze/_quarantine/source=<source>/sha256=<sha256>.<extension>
 ```
 
-The layer exists for audit, replay, parser changes, and investigation of upstream defects. The
-searchable manifest records acquisition time, source date or request window, checksum, size,
-version, and physical locations. Syntactically valid but implausibly incomplete input is retained
-for diagnosis where appropriate, but is not promoted as a successful dataset.
-
-Local Raw uses the same immutability principle under `data/raw/`. Optional validated replication
-copies accepted artifacts to S3 without changing their bytes.
+The layer exists for audit, replay, parser changes, and investigation of upstream defects.
+Accepted objects carry checksums and source metadata; NVD window manifests and Silver manifests
+are commit markers. Syntactically invalid or implausibly incomplete input is retained only in the
+quarantine prefix and is never promoted as a successful dataset.
 
 ### Silver — validated, typed source history
 
@@ -149,10 +145,10 @@ been proven complete.
 
 | Resource | Responsibility |
 | --- | --- |
-| PostgreSQL 17 | Application current/history/control tables, Airflow metadata database, and Metabase metadata database |
+| PostgreSQL 17 | Separate Airflow and Metabase metadata databases only; no pipeline business data |
 | Airflow 3.1 LocalExecutor | Daily DAGs, manual backfill, retries, timeouts, pools, and task dependencies |
-| Python application | Fetching, validation, transformation, checkpoints, repositories, and CLI tools |
-| Local Raw/Silver/Gold directories | Credential-free development, fixtures, replay, and Spark testing |
+| Python application | Fetching, validation, S3 publication, AWS-backed checkpoints, and CLI tools |
+| Local temporary directories | Test fixtures and bounded Lambda/Glue-compatible transformation scratch space only |
 | Metabase | Dashboards, filters, CVE search, and drill-through |
 
 ### AWS development runtime
@@ -175,7 +171,6 @@ been proven complete.
 | Technology | Why it is used |
 | --- | --- |
 | Python, Pydantic, HTTPX | Typed, testable source clients and validation with a small application surface |
-| SQLAlchemy, Alembic, PostgreSQL | Transactions, constraints, conditional upserts, migrations, and local analytical access |
 | Airflow | Explicit schedules, recovery DAGs, retries, pools, and operational visibility without putting business logic in DAG files |
 | S3 | Durable and inexpensive immutable object storage for replayable lake layers |
 | Parquet and PyArrow | Typed columnar storage, compression, and efficient analytical scans |
@@ -199,10 +194,8 @@ docs/                         design, validation, governance, and runbooks
 glue/                         AWS Glue job entry point
 infra/                        Terraform modules and development environment
 lambda/                       container entry points for Silver transformations
-migrations/                   versioned PostgreSQL schema changes
 scripts/                      reproducible verification and release workflows
 src/threatflow/ingestion/     source fetching, parsing, and completeness validation
-src/threatflow/repository/    transactions and idempotent PostgreSQL persistence
 src/threatflow/transformation/ Bronze-to-Silver transformations
 src/threatflow/gold/          Gold build, publisher, Catalog, and Athena deployment
 tests/                        unit, Airflow, integration, Spark, and Terraform tests
@@ -216,7 +209,7 @@ tests/                        unit, Airflow, integration, Spark, and Terraform t
 - Docker Desktop or another Docker Engine with Compose v2;
 - Python 3.12 or newer;
 - [`uv`](https://docs.astral.sh/uv/);
-- JDK 21 only when running local PySpark tests or local Gold reconstruction.
+- JDK 21 only when running local PySpark tests.
 
 JDK 24 is not supported by the current local Spark/Parquet test runtime. AWS Glue supplies its
 own managed runtime.
@@ -236,7 +229,6 @@ THREATFLOW_POSTGRES_PASSWORD
 AIRFLOW_ADMIN_PASSWORD
 AIRFLOW_JWT_SECRET
 METABASE_DB_PASSWORD
-THREATFLOW_ANALYTICS_PASSWORD
 MB_ENCRYPTION_SECRET_KEY
 MB_SESSION_SECRET_KEY
 ```
@@ -248,9 +240,9 @@ openssl rand -hex 32
 openssl rand -base64 32
 ```
 
-Keep `.env` local; it is ignored by Git. `THREATFLOW_NVD_API_KEY` and
-`THREATFLOW_GITHUB_TOKEN` are optional but useful for higher API limits and CISA Git-history
-access.
+Keep `.env` local; it is ignored by Git. `THREATFLOW_NVD_API_KEY` is optional but useful for
+higher NVD API limits. Configure the Bronze and Silver bucket names plus the short-lived local
+Airflow AWS profile paths before starting ingestion.
 
 ### 2. Install the development environment
 
@@ -264,21 +256,21 @@ This installs the application, CLI entry points, test tools, and local PySpark d
 ### 3. Validate and start the stack
 
 ```bash
-docker compose config -q
-docker compose up -d --build
-docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.aws.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.aws.yml ps
 ```
 
-The one-shot services create the separate Airflow and Metabase databases and apply application
-and Airflow migrations before the long-running services start. First startup can take several
-minutes.
+The one-shot services create the separate Airflow and Metabase metadata databases and initialise
+Airflow before the long-running services start. No application-data database or local lake
+directory is created. First startup can take several minutes.
 
 Open:
 
 - Airflow: <http://localhost:8080> — user `admin` by default and the password from
   `AIRFLOW_ADMIN_PASSWORD`;
 - Metabase: <http://localhost:3000>;
-- PostgreSQL: `localhost:5432` using the values from `.env`.
+- PostgreSQL: `localhost:5432`, for local service metadata only.
 
 Check startup failures with:
 
@@ -297,11 +289,12 @@ In Airflow, unpause and trigger the required DAG:
 | `nvd_daily` | `0 3 * * *` | Fetch the next durable NVD modification window |
 | `cisa_daily` | `0 4 * * *` | Synchronise and validate the current KEV catalog |
 | `epss_daily` | `0 6 * * *` | Ingest a date-specific EPSS archive |
-| `cisa_watcher_hourly` | hourly | Detect a changed CISA catalog revision |
 | `threat_intel_backfill` | manual | Validated historical loads and recovery |
 
-Daily DAGs use `catchup=False`. Missed NVD coverage is recovered through the durable checkpoint
-and explicit modified-window backfill, not by relying on Airflow catchup.
+Daily DAGs use `catchup=False`. Missed NVD coverage is recovered through the durable S3 checkpoint
+and explicit modified-window backfill, not by relying on Airflow catchup. CISA is a current
+catalog: selecting it in backfill performs one current `snapshot_sync`, not one fake historical
+load per requested date.
 
 Example manual backfill configuration, with inclusive dates:
 
@@ -350,7 +343,7 @@ export PYSPARK_DRIVER_PYTHON="$PWD/.venv/bin/python"
 ### 6. Stop safely
 
 ```bash
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.aws.yml down
 ```
 
 This stops containers and retains named PostgreSQL, Airflow-log, and Airflow-auth volumes. Do not
@@ -430,7 +423,7 @@ See:
   fingerprints;
 - a newer NVD record cannot be replaced by a stale historical response;
 - source dates are distinct from ingestion timestamps;
-- commits/checkpoints advance only after complete validation and durable publication;
+- commits/checkpoints advance only after complete validation and durable AWS publication;
 - credentials, `.env`, Terraform state, plans, generated variables, Raw data, and release
   manifests must not be committed;
 - AWS identities and service roles use separate least-privilege policies;
@@ -445,6 +438,7 @@ and governance decisions are in [governance.md](docs/governance.md).
 - [Capstone report](docs/capstone-report.md)
 - [Dataset assessment](docs/dataset-assessment.md)
 - [Data catalog](docs/data-catalog.md)
+- [Data-quality gates](docs/data-quality-gates.md)
 - [Architecture](docs/data-pipeline-treatflow.md)
 - [Data model](docs/data-model.md)
 - [Vulnerability prioritisation policy](docs/vulnerability-prioritization.en.md)

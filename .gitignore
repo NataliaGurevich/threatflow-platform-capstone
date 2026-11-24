@@ -71,6 +71,5 @@ infra/modules/**/.terraform.lock.hcl
 # Agent
 AGENTS.md
 
-# data
-data/*
-data/*backfill-checkpoint.json*
+# Local runtime data
+data/

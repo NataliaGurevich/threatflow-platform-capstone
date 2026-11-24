@@ -62,6 +62,8 @@ docker compose -f docker-compose.yml -f docker-compose.aws.yml exec airflow-sche
   'import boto3; print(boto3.client("sts").get_caller_identity()["Arn"])'
 ```
 
-Only after that check succeeds should `THREATFLOW_S3_REPLICATION_ENABLED=true` be set and the
-scheduler restarted. The login session eventually expires and requires an interactive login;
-therefore this mechanism is suitable for a capstone demonstration, not unattended production.
+The ingestion runtime always writes accepted source data directly to S3; there is no dual-write
+or replication switch. Do not unpause ingestion DAGs until the identity check and configured
+Bronze/Silver bucket checks succeed. The login session eventually expires and requires an
+interactive login; therefore this mechanism is suitable for a capstone demonstration, not
+unattended production.

@@ -18,10 +18,22 @@ def validate_completeness(
     count: int,
     score_date: date,
     adjacent_count: int | None = None,
+    minimum_count_override: int | None = None,
 ) -> None:
     """Reject structurally valid EPSS archives that are implausibly incomplete."""
-    floor = MIN_ROWS_BY_YEAR.get(score_date.year, MIN_ROWS_BY_YEAR[max(MIN_ROWS_BY_YEAR)])
-    if count < floor or (adjacent_count and count < adjacent_count * 0.8):
+    if minimum_count_override is not None and (
+        type(minimum_count_override) is not int or minimum_count_override < 1
+    ):
+        raise ValueError("EPSS completeness override must be a positive integer")
+    floor = minimum_count_override or MIN_ROWS_BY_YEAR.get(
+        score_date.year, MIN_ROWS_BY_YEAR[max(MIN_ROWS_BY_YEAR)]
+    )
+    adjacent_failed = (
+        minimum_count_override is None
+        and adjacent_count is not None
+        and count < adjacent_count * 0.8
+    )
+    if count < floor or adjacent_failed:
         raise ValueError(
             f"EPSS dataset incomplete for {score_date}: {count} rows; "
             f"minimum {floor}, adjacent day {adjacent_count}"

@@ -1,6 +1,5 @@
 """PostgreSQL 17 repository integration tests in disposable Testcontainers."""
 
-import json
 from datetime import UTC, date, datetime
 
 import pytest
@@ -14,7 +13,6 @@ from testcontainers.postgres import PostgresContainer
 
 from threatflow.models.base import Base
 from threatflow.models.cisa import CisaKevVulnerability
-from threatflow.models.cisa_change import CisaKevChange
 from threatflow.models.raw_artifact import RawArtifact, RawArtifactLocation
 from threatflow.raw_storage import RawArtifactRef
 from threatflow.raw_storage_reconciliation import list_reconciliation_candidates
@@ -281,57 +279,3 @@ def test_reconciliation_dry_run_uses_manifest_and_local_bytes_without_aws(
     assert result.target_uris == (
         f"s3://threatflow-bronze/bronze/source=epss/sha256={local.sha256}.csv.gz",
     )
-
-
-def test_daily_ingestion_writes_incremental_changes_atomically(session, tmp_path, monkeypatch):
-    from threatflow.config import Settings
-    from threatflow.ingestion import cisa_ingestion
-
-    def snapshot(product="Product", *, include_second=False):
-        vulnerabilities = [
-            {
-                "cveID": "CVE-2024-0001",
-                "vendorProject": "Vendor",
-                "product": product,
-                "vulnerabilityName": "Name",
-                "dateAdded": "2024-01-01",
-                "shortDescription": "Description",
-                "requiredAction": "Patch",
-                "dueDate": "2024-02-01",
-                "knownRansomwareCampaignUse": "Unknown",
-            }
-        ]
-        if include_second:
-            vulnerabilities.append(
-                vulnerabilities[0] | {"cveID": "CVE-2024-0002", "vulnerabilityName": "Second"}
-            )
-        return json.dumps(
-            {"count": len(vulnerabilities), "vulnerabilities": vulnerabilities}
-        ).encode()
-
-    class Client:
-        content = snapshot()
-
-        def fetch(self):
-            return self.content
-
-    client = Client()
-    engine = session.get_bind()
-    monkeypatch.setattr(cisa_ingestion, "create_engine", lambda _: engine)
-    settings = Settings(raw_data_dir=str(tmp_path), database_url="unused", _env_file=None)
-
-    first = cisa_ingestion.ingest_cisa_kev(client=client, settings=settings)
-    client.content = snapshot("Updated", include_second=True)
-    second = cisa_ingestion.ingest_cisa_kev(client=client, settings=settings)
-    repeated = cisa_ingestion.ingest_cisa_kev(client=client, settings=settings)
-
-    session.expire_all()
-    changes = session.scalars(
-        select(CisaKevChange).order_by(CisaKevChange.committed_at, CisaKevChange.cve_id)
-    ).all()
-    assert first.change_records == 1
-    assert second.change_records == 2
-    assert repeated.change_records == 0
-    assert [change.change_type for change in changes] == ["baseline", "modified", "added"]
-    assert changes[1].changed_fields == ["product"]
-    assert all(change.revision_type == "content_sha256" for change in changes)
