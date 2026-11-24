@@ -161,6 +161,7 @@ services:
   airflow-api-server:
     <<: *airflow-common
     command: api-server
+    restart: unless-stopped
     ports:
       - '8080:8080'
     healthcheck:
@@ -174,6 +175,7 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    restart: unless-stopped
     healthcheck:
       test:
         - CMD-SHELL
@@ -185,6 +187,7 @@ services:
   airflow-dag-processor:
     <<: *airflow-common
     command: dag-processor
+    restart: unless-stopped
     healthcheck:
       test:
         - CMD-SHELL
