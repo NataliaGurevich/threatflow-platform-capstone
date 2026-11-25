@@ -203,6 +203,19 @@ oldest message exceeds the configured threshold, and a non-empty source DLQ. Rec
 back to `OK` are also delivered. Set `silver_alert_email` before applying Terraform and confirm the
 SNS subscription from that mailbox; unconfirmed email subscriptions receive no messages.
 
+### Data-quality log levels
+
+Source-schema observations use three operational levels. An expected schema is `INFO`; new
+non-contract fields are accepted through the existing projection and logged as `WARNING` with the
+exact field names; missing required fields are logged as `ERROR`, rejected, retained in Bronze
+quarantine, and propagated as a failed Airflow task. Airflow task boundaries add one structured
+failure record with the source, exception type, reason, and `action=task_failed` before re-raising.
+
+Source dates are not guessed or silently reformatted. CISA `dateAdded` and `dueDate`, and Airflow
+backfill calendar parameters, require valid canonical `YYYY-MM-DD` values. Documented
+source-specific timestamps such as NVD `Z`/offset timestamps are normalized to UTC; unsupported or
+ambiguous formats fail validation.
+
 ## Repository layout
 
 ```text

@@ -39,6 +39,20 @@ def test_invalid_backfill(sources):
         validate_backfill(sources, "2025-01-01", "2025-01-02")
 
 
+@pytest.mark.parametrize(
+    ("start_date", "end_date"),
+    [
+        ("20250101", "2025-01-02"),
+        ("2025/01/01", "2025-01-02"),
+        ("2025-01-01", "02.01.2025"),
+        ("2025-02-30", "2025-03-01"),
+    ],
+)
+def test_backfill_dates_require_canonical_valid_iso_dates(start_date, end_date):
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        validate_backfill(["nvd"], start_date, end_date)
+
+
 def test_cisa_daily_accepts_cron_trigger_point_interval(monkeypatch):
     from threatflow.orchestration import ingestion_runner as runner
 
@@ -79,6 +93,30 @@ def test_airflow_daily_normalizes_source_and_logs_stages(monkeypatch, caplog):
     assert result["source"] == "cisa"
     assert "stage=task_input" in caplog.text
     assert "stage=ingestion_complete" in caplog.text
+
+
+def test_airflow_daily_logs_structured_error_and_reraises(monkeypatch, caplog):
+    from threatflow.orchestration import airflow_tasks
+    from threatflow.orchestration import ingestion_runner as runner
+
+    def fail(*args, **kwargs):
+        raise ValueError("source validation failed")
+
+    monkeypatch.setattr(runner, "run_daily", fail)
+    caplog.set_level("INFO")
+
+    with pytest.raises(ValueError, match="source validation failed"):
+        airflow_tasks.daily(
+            "epss",
+            "2026-11-04T06:00:00+00:00",
+            "2026-11-04T06:00:00+00:00",
+        )
+
+    failed = [record for record in caplog.records if "stage=ingestion_failed" in record.message]
+    assert len(failed) == 1
+    assert failed[0].levelno == 40
+    assert "error_type=ValueError" in failed[0].message
+    assert "action=task_failed" in failed[0].message
 
 
 def test_epss_daily_accepts_cron_trigger_point_interval(monkeypatch):

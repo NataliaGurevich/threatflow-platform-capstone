@@ -29,7 +29,16 @@ def daily(source, interval_start, interval_end):
             f"start={interval_start!r}, end={interval_end!r}"
         ) from exc
     log.info("stage=ingestion_start source=%s", source)
-    result = run_daily(source, start, end)
+    try:
+        result = run_daily(source, start, end)
+    except Exception as exc:
+        log.exception(
+            "stage=ingestion_failed source=%s error_type=%s reason=%s action=task_failed",
+            source,
+            type(exc).__name__,
+            exc,
+        )
+        raise
     log.info(
         "stage=ingestion_complete source=%s fetched=%d accepted=%d "
         "bronze_created=%d bronze_reused=%d",
@@ -84,13 +93,22 @@ def backfill_source(source, sources, start_date, end_date, nvd_mode, chunk_days)
         log.info("stage=backfill_skipped source=%s", source)
         return {"source": source, "skipped": True}
     log.info("stage=backfill_start source=%s", source)
-    result = run_backfill(
-        source,
-        date.fromisoformat(start_date),
-        date.fromisoformat(end_date),
-        nvd_mode,
-        int(chunk_days),
-    )
+    try:
+        result = run_backfill(
+            source,
+            date.fromisoformat(start_date),
+            date.fromisoformat(end_date),
+            nvd_mode,
+            int(chunk_days),
+        )
+    except Exception as exc:
+        log.exception(
+            "stage=backfill_failed source=%s error_type=%s reason=%s action=task_failed",
+            source,
+            type(exc).__name__,
+            exc,
+        )
+        raise
     log.info(
         "stage=backfill_complete source=%s fetched=%d accepted=%d "
         "bronze_created=%d bronze_reused=%d",

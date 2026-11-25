@@ -1,6 +1,7 @@
 """Small, Airflow-independent entry points around existing ingestion services."""
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -8,6 +9,7 @@ from threatflow.orchestration.date_windows import date_chunks, nvd_recovery_wind
 
 LOG = logging.getLogger(__name__)
 SOURCES = frozenset({"nvd", "cisa", "epss"})
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 @dataclass(frozen=True)
@@ -30,10 +32,14 @@ def validate_backfill(sources, start_date, end_date, nvd_mode="published", max_d
         or set(sources) - SOURCES
     ):
         raise ValueError("sources must be a nonempty list of distinct nvd, cisa, epss")
+    if not isinstance(start_date, str) or not isinstance(end_date, str):
+        raise ValueError("start_date and end_date must be ISO YYYY-MM-DD dates")
+    if not _ISO_DATE.fullmatch(start_date) or not _ISO_DATE.fullmatch(end_date):
+        raise ValueError("start_date and end_date must be ISO YYYY-MM-DD dates")
     try:
         start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
     except (TypeError, ValueError) as exc:
-        raise ValueError("start_date and end_date must be ISO dates") from exc
+        raise ValueError("start_date and end_date must be valid ISO YYYY-MM-DD dates") from exc
     effective_max_days = 366 if set(sources) == {"cisa"} else max_days
     if start > end or end > datetime.now(UTC).date() or (end - start).days + 1 > effective_max_days:
         raise ValueError("invalid or excessive backfill date range")

@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from threatflow.ingestion.schema_observability import log_source_schema
 
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 LOGGER = logging.getLogger(__name__)
 
 _CATALOG_REQUIRED_FIELDS = {"vulnerabilities"}
@@ -61,7 +62,7 @@ class Vulnerability(BaseModel):
     @field_validator("dateAdded", "dueDate", mode="before")
     @classmethod
     def parse_iso_date(cls, value: Any) -> date:
-        if not isinstance(value, str):
+        if not isinstance(value, str) or not _ISO_DATE.fullmatch(value):
             raise ValueError("date must be an ISO YYYY-MM-DD string")
         try:
             return date.fromisoformat(value)

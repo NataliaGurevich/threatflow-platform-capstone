@@ -49,6 +49,44 @@ def test_logs_catalog_fields_and_accepted_schema_drift(caplog, monkeypatch):
     assert "unexpected_fields=newCatalogField" in caplog.text
     assert "source=cisa_kev scope=vulnerability status=accepted_with_drift" in caplog.text
     assert "unexpected_fields=newSourceField" in caplog.text
+    drift_records = [
+        record for record in caplog.records if "status=accepted_with_drift" in record.message
+    ]
+    assert drift_records
+    assert all(record.levelno == logging.WARNING for record in drift_records)
+
+
+def test_logs_expected_schema_at_info(caplog, monkeypatch):
+    monkeypatch.setattr(
+        logging.getLogger("threatflow.ingestion.cisa_parser"), "disabled", False
+    )
+    with caplog.at_level(logging.INFO):
+        parse_catalog(json.dumps({"vulnerabilities": [RECORD]}).encode())
+
+    accepted = [record for record in caplog.records if "status=accepted" in record.message]
+    assert accepted
+    assert all(record.levelno == logging.INFO for record in accepted)
+
+
+def test_logs_missing_required_schema_at_error(caplog, monkeypatch):
+    monkeypatch.setattr(
+        logging.getLogger("threatflow.ingestion.cisa_parser"), "disabled", False
+    )
+    with caplog.at_level(logging.INFO), pytest.raises(ValueError):
+        parse_catalog(b'{"vulnerabilities":[{}]}')
+
+    rejected = [record for record in caplog.records if "status=rejected" in record.message]
+    assert rejected
+    assert all(record.levelno == logging.ERROR for record in rejected)
+    assert "missing_required_fields=" in caplog.text
+
+
+@pytest.mark.parametrize("field", ["dateAdded", "dueDate"])
+@pytest.mark.parametrize("value", ["20240101", "01.01.2024", "2024/01/01"])
+def test_cisa_dates_require_canonical_iso_format(field, value):
+    record = {**RECORD, field: value}
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        parse_catalog(json.dumps({"vulnerabilities": [record]}).encode())
 
 
 @pytest.mark.parametrize(
