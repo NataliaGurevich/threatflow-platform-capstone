@@ -199,6 +199,14 @@ The missing-success alarm has actions disabled while `gold_schedule_enabled=fals
 false notification before the daily runtime is intentionally enabled. Terminal errors from a
 manual smoke test remain alertable.
 
+### Silver failure notifications
+
+The Bronze-to-Silver observability module sends all NVD, CISA, and EPSS transformation alarms to
+a dedicated SNS topic. Notifications cover an emitted processing failure, a source queue whose
+oldest message exceeds the configured threshold, and a non-empty source DLQ. Recovery transitions
+back to `OK` are also delivered. Set `silver_alert_email` before applying Terraform and confirm the
+SNS subscription from that mailbox; unconfirmed email subscriptions receive no messages.
+
 ## Repository layout
 
 ```text

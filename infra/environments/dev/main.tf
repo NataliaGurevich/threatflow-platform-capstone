@@ -162,6 +162,8 @@ module "pipeline_observability" {
 
   name_prefix         = "threatflow-dev"
   aws_region          = var.aws_region
+  account_id          = data.aws_caller_identity.current.account_id
+  notification_email  = var.silver_alert_email
   cisa_log_group_name = module.cisa_silver_runtime.log_group_name
   epss_log_group_name = module.epss_silver_lambda.log_group_name
   cisa_function_name  = module.cisa_silver_runtime.function_name

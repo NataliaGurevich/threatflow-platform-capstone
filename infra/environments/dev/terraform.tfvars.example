@@ -45,6 +45,9 @@ cisa_minimum_previous_ratio               = 0.8
 nvd_silver_lambda_image_uri             = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/threatflow-nvd-silver-dev@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 nvd_silver_event_source_mapping_enabled = false
 
+# Optional. After terraform apply, confirm the subscription from this mailbox.
+silver_alert_email = ""
+
 # Local Docker Compose only. This creates an IAM user with no access keys and attaches
 # the Bronze object policy plus AWS SignInLocalDevelopmentAccess.
 create_airflow_local_identity = false

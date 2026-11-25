@@ -140,6 +140,11 @@ output "pipeline_alarm_names" {
   value       = module.pipeline_observability.alarm_names
 }
 
+output "silver_alarm_topic_arn" {
+  description = "SNS topic receiving NVD, CISA, and EPSS Bronze-to-Silver alarm state changes."
+  value       = module.pipeline_observability.alarm_topic_arn
+}
+
 output "airflow_local_user_arn" {
   description = "Local Airflow IAM user ARN, or null when the identity is disabled."
   value       = try(aws_iam_user.airflow_local[0].arn, null)

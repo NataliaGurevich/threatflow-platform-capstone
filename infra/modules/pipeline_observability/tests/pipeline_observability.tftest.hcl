@@ -4,11 +4,18 @@ mock_provider "aws" {
       arn = "arn:aws:cloudwatch:eu-central-1:123456789012:alarm:mock"
     }
   }
+
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:eu-central-1:123456789012:threatflow-test-bronze-to-silver-alarms"
+    }
+  }
 }
 
 variables {
   name_prefix         = "threatflow-test"
   aws_region          = "eu-central-1"
+  account_id          = "123456789012"
   cisa_log_group_name = "/aws/lambda/threatflow-cisa-silver-test"
   epss_log_group_name = "/aws/lambda/threatflow-epss-silver-test"
   cisa_function_name  = "threatflow-cisa-silver-test"
@@ -47,17 +54,33 @@ run "creates_bounded_pipeline_observability" {
   assert {
     condition = alltrue([
       for alarm in aws_cloudwatch_metric_alarm.processing_failed :
-      alarm.treat_missing_data == "notBreaching" && alarm.datapoints_to_alarm == 1
+      alarm.treat_missing_data == "notBreaching" &&
+      alarm.datapoints_to_alarm == 1 &&
+      contains(alarm.alarm_actions, aws_sns_topic.alarms.arn) &&
+      contains(alarm.ok_actions, aws_sns_topic.alarms.arn)
     ])
-    error_message = "Sparse processing-failure alarms must not alarm when data is missing."
+    error_message = "Sparse processing-failure alarms must use explicit missing-data behavior and notify through SNS."
   }
 
   assert {
     condition = alltrue([
       for alarm in aws_cloudwatch_metric_alarm.queue_age :
-      alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"
+      alarm.evaluation_periods == 3 &&
+      alarm.datapoints_to_alarm == 2 &&
+      alarm.treat_missing_data == "notBreaching" &&
+      contains(alarm.alarm_actions, aws_sns_topic.alarms.arn)
     ])
-    error_message = "Queue-stall alarms must use 2-of-3 evaluation and explicit missing-data behavior."
+    error_message = "Queue-stall alarms must use 2-of-3 evaluation and notify through SNS."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in aws_cloudwatch_metric_alarm.dlq_not_empty :
+      alarm.treat_missing_data == "notBreaching" &&
+      contains(alarm.alarm_actions, aws_sns_topic.alarms.arn) &&
+      contains(alarm.ok_actions, aws_sns_topic.alarms.arn)
+    ])
+    error_message = "Every Silver DLQ alarm must notify through SNS and report recovery."
   }
 
   assert {

@@ -53,6 +53,37 @@ resource "aws_cloudwatch_log_metric_filter" "audit" {
   }
 }
 
+resource "aws_sns_topic" "alarms" {
+  name = "${var.name_prefix}-bronze-to-silver-alarms"
+  tags = var.tags
+}
+
+resource "aws_sns_topic_policy" "alarms" {
+  arn = aws_sns_topic.alarms.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowCloudWatchAlarmPublish"
+      Effect    = "Allow"
+      Principal = { Service = "cloudwatch.amazonaws.com" }
+      Action    = "sns:Publish"
+      Resource  = aws_sns_topic.alarms.arn
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = var.account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:cloudwatch:${var.aws_region}:${var.account_id}:alarm:${var.name_prefix}-*" }
+      }
+    }]
+  })
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  count = var.notification_email == "" ? 0 : 1
+
+  topic_arn = aws_sns_topic.alarms.arn
+  protocol  = "email"
+  endpoint  = var.notification_email
+}
+
 resource "aws_cloudwatch_metric_alarm" "processing_failed" {
   for_each = local.sources
 
@@ -67,6 +98,8 @@ resource "aws_cloudwatch_metric_alarm" "processing_failed" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = var.tags
 
   depends_on = [aws_cloudwatch_log_metric_filter.audit]
@@ -89,7 +122,9 @@ resource "aws_cloudwatch_metric_alarm" "queue_age" {
   dimensions = {
     QueueName = each.value.queue_name
   }
-  tags = var.tags
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+  tags          = var.tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
@@ -109,7 +144,9 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
   dimensions = {
     QueueName = each.value.dlq_name
   }
-  tags = var.tags
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+  tags          = var.tags
 }
 
 resource "aws_cloudwatch_dashboard" "pipeline" {

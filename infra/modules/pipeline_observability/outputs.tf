@@ -16,3 +16,8 @@ output "alarm_names" {
     [for alarm in aws_cloudwatch_metric_alarm.dlq_not_empty : alarm.alarm_name],
   )
 }
+
+output "alarm_topic_arn" {
+  description = "SNS topic receiving Bronze-to-Silver alarm state changes."
+  value       = aws_sns_topic.alarms.arn
+}

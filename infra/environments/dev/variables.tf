@@ -288,6 +288,17 @@ variable "gold_alert_email" {
   }
 }
 
+variable "silver_alert_email" {
+  description = "Optional email recipient for NVD, CISA, and EPSS Bronze-to-Silver alarms. Confirmation is required after apply."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.silver_alert_email == "" || can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.silver_alert_email))
+    error_message = "silver_alert_email must be empty or a syntactically valid email address."
+  }
+}
+
 variable "gold_success_heartbeat_hours" {
   description = "Maximum hours without a successful daily Gold Glue run before alerting."
   type        = number
