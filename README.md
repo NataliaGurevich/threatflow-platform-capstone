@@ -185,6 +185,20 @@ Kafka, Kubernetes, and a continuously running Spark cluster are intentionally ex
 source cadence is daily or periodic, and the current capstone volume does not justify their
 operational complexity.
 
+### Gold failure notifications
+
+The Terraform-managed Gold runtime sends three CloudWatch alarms to a dedicated SNS topic:
+
+- terminal Glue states (`FAILED`, `TIMEOUT`, or `STOPPED`);
+- a non-empty EventBridge Scheduler dead-letter queue;
+- no successful Gold Glue heartbeat within the configured rolling window (26 hours by default).
+
+Set `gold_alert_email` before applying the development Terraform environment, then confirm the
+subscription from that mailbox. AWS does not deliver email notifications until confirmation.
+The missing-success alarm has actions disabled while `gold_schedule_enabled=false`, avoiding a
+false notification before the daily runtime is intentionally enabled. Terminal errors from a
+manual smoke test remain alertable.
+
 ## Repository layout
 
 ```text

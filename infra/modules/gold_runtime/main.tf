@@ -412,8 +412,27 @@ resource "aws_cloudwatch_event_rule" "glue_failures" {
   tags = var.tags
 }
 
+resource "aws_cloudwatch_event_rule" "glue_successes" {
+  name        = "${var.name_prefix}-successes"
+  description = "Capture successful runs of the Terraform-managed Gold Glue job as a freshness heartbeat."
+  event_pattern = jsonencode({
+    source      = ["aws.glue"]
+    detail-type = ["Glue Job State Change"]
+    detail = {
+      jobName = [aws_glue_job.this.name]
+      state   = ["SUCCEEDED"]
+    }
+  })
+  tags = var.tags
+}
+
 resource "aws_cloudwatch_event_target" "glue_failures" {
   rule = aws_cloudwatch_event_rule.glue_failures.name
+  arn  = aws_cloudwatch_log_group.glue_failures.arn
+}
+
+resource "aws_cloudwatch_event_target" "glue_successes" {
+  rule = aws_cloudwatch_event_rule.glue_successes.name
   arn  = aws_cloudwatch_log_group.glue_failures.arn
 }
 
@@ -421,13 +440,17 @@ resource "aws_cloudwatch_log_resource_policy" "eventbridge" {
   policy_name = "${var.name_prefix}-eventbridge-logs"
   policy_document = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
+    Statement = [for rule_arn in [
+      aws_cloudwatch_event_rule.glue_failures.arn,
+      aws_cloudwatch_event_rule.glue_successes.arn,
+      ] : {
       Effect    = "Allow"
       Principal = { Service = "events.amazonaws.com" }
       Action    = ["logs:CreateLogStream", "logs:PutLogEvents"]
       Resource  = "${aws_cloudwatch_log_group.glue_failures.arn}:*"
       Condition = {
-        ArnEquals = { "aws:SourceArn" = aws_cloudwatch_event_rule.glue_failures.arn }
+        StringEquals = { "aws:SourceAccount" = var.account_id }
+        ArnEquals    = { "aws:SourceArn" = rule_arn }
       }
     }]
   })
@@ -445,6 +468,50 @@ resource "aws_cloudwatch_log_metric_filter" "glue_failures" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "glue_successes" {
+  name           = "${var.name_prefix}-successes"
+  pattern        = "{ $.detail.state = \"SUCCEEDED\" }"
+  log_group_name = aws_cloudwatch_log_group.glue_failures.name
+
+  metric_transformation {
+    name      = "GoldGlueSuccessfulRuns"
+    namespace = "ThreatFlow/Gold"
+    value     = "1"
+    unit      = "Count"
+  }
+}
+
+resource "aws_sns_topic" "alarms" {
+  name = "${var.name_prefix}-alarms"
+  tags = var.tags
+}
+
+resource "aws_sns_topic_policy" "alarms" {
+  arn = aws_sns_topic.alarms.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowCloudWatchAlarmPublish"
+      Effect    = "Allow"
+      Principal = { Service = "cloudwatch.amazonaws.com" }
+      Action    = "sns:Publish"
+      Resource  = aws_sns_topic.alarms.arn
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = var.account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:cloudwatch:${var.aws_region}:${var.account_id}:alarm:${var.name_prefix}-*" }
+      }
+    }]
+  })
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  count = var.notification_email == "" ? 0 : 1
+
+  topic_arn = aws_sns_topic.alarms.arn
+  protocol  = "email"
+  endpoint  = var.notification_email
+}
+
 resource "aws_cloudwatch_metric_alarm" "glue_failures" {
   alarm_name          = "${var.name_prefix}-terminal-failure"
   alarm_description   = "The daily vulnerability-priority Gold Glue job failed, timed out, or stopped."
@@ -456,5 +523,50 @@ resource "aws_cloudwatch_metric_alarm" "glue_failures" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "scheduler_dlq" {
+  alarm_name          = "${var.name_prefix}-scheduler-dlq-not-empty"
+  alarm_description   = "EventBridge Scheduler could not deliver the daily StartJobRun request to Glue."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  dimensions = {
+    QueueName = aws_sqs_queue.scheduler_dlq.name
+  }
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+  tags          = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "success_heartbeat" {
+  alarm_name        = "${var.name_prefix}-success-heartbeat-missing"
+  alarm_description = "No successful daily Gold Glue run was observed within ${var.success_heartbeat_hours} hours; a committed Gold snapshot may be missing."
+  namespace         = "ThreatFlow/Gold"
+  metric_name       = "GoldGlueSuccessfulRuns"
+  statistic         = "Sum"
+  period            = 3600
+
+  # One SUCCEEDED datapoint keeps one bucket non-breaching. The alarm fires only
+  # when every hourly bucket in the complete rolling window is missing.
+  evaluation_periods  = var.success_heartbeat_hours
+  datapoints_to_alarm = var.success_heartbeat_hours
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  actions_enabled     = var.schedule_enabled
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+
+  depends_on = [aws_cloudwatch_log_metric_filter.glue_successes]
 }

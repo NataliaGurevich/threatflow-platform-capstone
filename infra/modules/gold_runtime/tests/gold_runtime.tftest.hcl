@@ -30,6 +30,12 @@ mock_provider "aws" {
       arn = "arn:aws:events:eu-central-1:123456789012:rule/threatflow-vulnerability-priority-gold-test-failures"
     }
   }
+
+  mock_resource "aws_sns_topic" {
+    defaults = {
+      arn = "arn:aws:sns:eu-central-1:123456789012:threatflow-vulnerability-priority-gold-test-alarms"
+    }
+  }
 }
 
 variables {
@@ -117,9 +123,32 @@ run "creates_disabled_daily_auto_gold_runtime" {
   assert {
     condition = (
       aws_cloudwatch_event_rule.glue_failures.event_pattern != "" &&
-      aws_cloudwatch_metric_alarm.glue_failures.treat_missing_data == "notBreaching"
+      aws_cloudwatch_metric_alarm.glue_failures.treat_missing_data == "notBreaching" &&
+      contains(aws_cloudwatch_metric_alarm.glue_failures.alarm_actions, aws_sns_topic.alarms.arn)
     )
-    error_message = "Terminal Glue failures must be captured and alarmed without false missing-data alarms."
+    error_message = "Terminal Glue failures must be captured and delivered to the alarm topic."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.scheduler_dlq.dimensions.QueueName == aws_sqs_queue.scheduler_dlq.name &&
+      aws_cloudwatch_metric_alarm.scheduler_dlq.treat_missing_data == "notBreaching" &&
+      contains(aws_cloudwatch_metric_alarm.scheduler_dlq.alarm_actions, aws_sns_topic.alarms.arn)
+    )
+    error_message = "Scheduler delivery failures must alarm through the shared notification topic."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_cloudwatch_event_rule.glue_successes.event_pattern, "SUCCEEDED") &&
+      aws_cloudwatch_metric_alarm.success_heartbeat.comparison_operator == "LessThanThreshold" &&
+      aws_cloudwatch_metric_alarm.success_heartbeat.treat_missing_data == "breaching" &&
+      aws_cloudwatch_metric_alarm.success_heartbeat.evaluation_periods == 26 &&
+      aws_cloudwatch_metric_alarm.success_heartbeat.datapoints_to_alarm == 26 &&
+      aws_cloudwatch_metric_alarm.success_heartbeat.actions_enabled == false &&
+      contains(aws_cloudwatch_metric_alarm.success_heartbeat.alarm_actions, aws_sns_topic.alarms.arn)
+    )
+    error_message = "A missing daily Glue success heartbeat must raise a fail-closed notification alarm."
   }
 }
 

@@ -277,6 +277,28 @@ variable "gold_schedule_enabled" {
   default     = false
 }
 
+variable "gold_alert_email" {
+  description = "Optional email recipient for Gold Glue failure, Scheduler DLQ, and missing-success alarms. Confirmation is required after apply."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gold_alert_email == "" || can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.gold_alert_email))
+    error_message = "gold_alert_email must be empty or a syntactically valid email address."
+  }
+}
+
+variable "gold_success_heartbeat_hours" {
+  description = "Maximum hours without a successful daily Gold Glue run before alerting."
+  type        = number
+  default     = 26
+
+  validation {
+    condition     = var.gold_success_heartbeat_hours >= 24 && var.gold_success_heartbeat_hours <= 72 && floor(var.gold_success_heartbeat_hours) == var.gold_success_heartbeat_hours
+    error_message = "gold_success_heartbeat_hours must be a whole number between 24 and 72."
+  }
+}
+
 variable "create_athena_metabase_serving" {
   description = "Create the bounded Athena workgroup, query-results bucket, and Metabase service account."
   type        = bool

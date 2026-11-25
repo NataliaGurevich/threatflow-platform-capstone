@@ -180,6 +180,21 @@ output "gold_daily_failure_alarm_name" {
   value       = try(module.gold_runtime[0].failure_alarm_name, null)
 }
 
+output "gold_daily_scheduler_dlq_alarm_name" {
+  description = "Alarm for failed Scheduler-to-Glue target deliveries."
+  value       = try(module.gold_runtime[0].scheduler_dlq_alarm_name, null)
+}
+
+output "gold_daily_success_heartbeat_alarm_name" {
+  description = "Alarm for a missing successful daily Gold Glue run."
+  value       = try(module.gold_runtime[0].success_heartbeat_alarm_name, null)
+}
+
+output "gold_daily_alarm_topic_arn" {
+  description = "SNS topic receiving Gold runtime alarm state changes."
+  value       = try(module.gold_runtime[0].alarm_topic_arn, null)
+}
+
 output "athena_metabase_workgroup_name" {
   value = try(module.athena_metabase[0].workgroup_name, null)
 }

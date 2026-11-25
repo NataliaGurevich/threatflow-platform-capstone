@@ -120,6 +120,28 @@ variable "log_retention_days" {
   default = 30
 }
 
+variable "notification_email" {
+  description = "Optional email subscribed to Gold runtime alarms. The recipient must confirm the SNS subscription."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.notification_email == "" || can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.notification_email))
+    error_message = "notification_email must be empty or a syntactically valid email address."
+  }
+}
+
+variable "success_heartbeat_hours" {
+  description = "Maximum elapsed hours without a successful daily Gold Glue run before alerting."
+  type        = number
+  default     = 26
+
+  validation {
+    condition     = var.success_heartbeat_hours >= 24 && var.success_heartbeat_hours <= 72 && floor(var.success_heartbeat_hours) == var.success_heartbeat_hours
+    error_message = "success_heartbeat_hours must be a whole number between 24 and 72."
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
