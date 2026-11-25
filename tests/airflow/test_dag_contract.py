@@ -29,6 +29,7 @@ def test_all_dags_parse_and_use_external_interpreter():
         assert task.pool == f"{dag_id.split('_')[0]}_api_pool"
         assert task.python == "/opt/threatflow-venv/bin/python"
         assert task.expect_airflow is False
+        assert task.on_failure_callback
         assert "dag_run.run_after" in task.op_kwargs["interval_start"]
         assert "dag_run.run_after" in task.op_kwargs["interval_end"]
     backfill = bag.dags["threat_intel_backfill"]
@@ -39,3 +40,4 @@ def test_all_dags_parse_and_use_external_interpreter():
         assert isinstance(task, ExternalPythonOperator)
         assert task.pool == f"{source}_api_pool"
         assert task.expect_airflow is False
+        assert task.on_failure_callback

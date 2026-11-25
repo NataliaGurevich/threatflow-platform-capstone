@@ -14,10 +14,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/rebuild-airflow.sh [--force] [--skip-tests]
 
-Build the local Airflow image, safely recreate only the scheduler, and verify
-that the running container contains the current application code and AWS login mount.
+Build the local Airflow image, safely recreate the scheduler and DAG processor,
+and verify that both containers run the current application image.
 
-  --force       Recreate the scheduler even when Airflow reports running tasks.
+  --force       Recreate Airflow components even when tasks may be running.
   --skip-tests  Skip Ruff and focused Python tests (not recommended).
 EOF
 }
@@ -101,21 +101,22 @@ fi
 echo "==> Building Airflow image"
 "${compose[@]}" build airflow-scheduler
 
-echo "==> Recreating Airflow scheduler"
-"${compose[@]}" up -d --force-recreate airflow-scheduler
-
-container_id="$(${compose[@]} ps -q airflow-scheduler)"
-if [[ -z "$container_id" ]]; then
-  echo "error: scheduler container was not created" >&2
-  exit 1
-fi
+echo "==> Recreating Airflow scheduler and DAG processor"
+"${compose[@]}" up -d --force-recreate airflow-scheduler airflow-dag-processor
 
 local_image_id="$(docker image inspect threatflow-airflow:3.1.0 --format '{{.Id}}')"
-running_image_id="$(docker inspect "$container_id" --format '{{.Image}}')"
-if [[ "$local_image_id" != "$running_image_id" ]]; then
-  echo "error: scheduler image ID does not match the newly built local image" >&2
-  exit 1
-fi
+for service in airflow-scheduler airflow-dag-processor; do
+  container_id="$(${compose[@]} ps -q "$service")"
+  if [[ -z "$container_id" ]]; then
+    echo "error: ${service} container was not created" >&2
+    exit 1
+  fi
+  running_image_id="$(docker inspect "$container_id" --format '{{.Image}}')"
+  if [[ "$local_image_id" != "$running_image_id" ]]; then
+    echo "error: ${service} image ID does not match the newly built local image" >&2
+    exit 1
+  fi
+done
 
 host_source_sha="$(shasum -a 256 src/threatflow/ingestion/cisa_ingestion.py | awk '{print $1}')"
 container_source_sha="$(${compose[@]} exec -T airflow-scheduler \
@@ -144,4 +145,4 @@ print(identity["Arn"])
 assert not identity["Arn"].endswith(":root")
 '
 
-echo "PASS: Airflow scheduler is running the current local image (${running_image_id})"
+echo "PASS: Airflow scheduler and DAG processor run the current image (${local_image_id})"

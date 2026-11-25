@@ -216,6 +216,11 @@ backfill calendar parameters, require valid canonical `YYYY-MM-DD` values. Docum
 source-specific timestamps such as NVD `Z`/offset timestamps are normalized to UTC; unsupported or
 ambiguous formats fail validation.
 
+After retries are exhausted, every Airflow task uses one shared failure callback to publish a
+bounded structured event to the SNS topic configured by `THREATFLOW_AIRFLOW_FAILURE_TOPIC_ARN`.
+Retries use Airflow's separate retry state and do not invoke this terminal-failure notifier. The
+local Airflow IAM identity can publish only to the Terraform-managed pipeline alert topic.
+
 ## Repository layout
 
 ```text

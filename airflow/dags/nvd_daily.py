@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from airflow.providers.standard.operators.python import ExternalPythonOperator
 from airflow.sdk import DAG
 
+from threatflow.orchestration.airflow_notifications import notify_task_failure
 from threatflow.orchestration.airflow_tasks import daily
 
 with DAG(
@@ -13,7 +14,11 @@ with DAG(
     start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,
-    default_args={"retries": 3, "retry_delay": timedelta(minutes=5)},
+    default_args={
+        "retries": 3,
+        "retry_delay": timedelta(minutes=5),
+        "on_failure_callback": notify_task_failure,
+    },
     tags=["threatflow"],
 ) as dag:
     ExternalPythonOperator(

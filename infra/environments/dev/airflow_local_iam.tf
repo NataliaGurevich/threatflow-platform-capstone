@@ -40,6 +40,22 @@ resource "aws_iam_user_policy" "airflow_silver_quality_state" {
   })
 }
 
+resource "aws_iam_user_policy" "airflow_failure_notifications" {
+  count = var.create_airflow_local_identity ? 1 : 0
+
+  name = "threatflow-airflow-failure-notifications"
+  user = aws_iam_user.airflow_local[0].name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "PublishTerminalTaskFailures"
+      Effect   = "Allow"
+      Action   = "sns:Publish"
+      Resource = module.pipeline_observability.alarm_topic_arn
+    }]
+  })
+}
+
 resource "aws_iam_user_policy_attachment" "airflow_local_signin" {
   count = var.create_airflow_local_identity ? 1 : 0
 
