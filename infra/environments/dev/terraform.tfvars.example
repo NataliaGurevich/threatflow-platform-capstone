@@ -66,8 +66,7 @@ gold_schedule_expression   = "cron(0 9 * * ? *)"
 gold_schedule_timezone     = "Europe/Berlin"
 gold_schedule_enabled      = false
 # Optional. After terraform apply, confirm the subscription from this mailbox.
-gold_alert_email             = ""
-gold_success_heartbeat_hours = 26
+gold_alert_email = ""
 
 # Dedicated Athena serving boundary for the local Metabase instance. Terraform creates
 # the service-account user but deliberately does not create or store its access key.

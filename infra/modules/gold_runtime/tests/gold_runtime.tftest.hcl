@@ -138,18 +138,6 @@ run "creates_disabled_daily_auto_gold_runtime" {
     error_message = "Scheduler delivery failures must alarm through the shared notification topic."
   }
 
-  assert {
-    condition = (
-      strcontains(aws_cloudwatch_event_rule.glue_successes.event_pattern, "SUCCEEDED") &&
-      aws_cloudwatch_metric_alarm.success_heartbeat.comparison_operator == "LessThanThreshold" &&
-      aws_cloudwatch_metric_alarm.success_heartbeat.treat_missing_data == "breaching" &&
-      aws_cloudwatch_metric_alarm.success_heartbeat.evaluation_periods == 26 &&
-      aws_cloudwatch_metric_alarm.success_heartbeat.datapoints_to_alarm == 26 &&
-      aws_cloudwatch_metric_alarm.success_heartbeat.actions_enabled == false &&
-      contains(aws_cloudwatch_metric_alarm.success_heartbeat.alarm_actions, aws_sns_topic.alarms.arn)
-    )
-    error_message = "A missing daily Glue success heartbeat must raise a fail-closed notification alarm."
-  }
 }
 
 run "rejects_observed_with_incomplete_nvd_history" {

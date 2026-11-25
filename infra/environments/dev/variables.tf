@@ -278,7 +278,7 @@ variable "gold_schedule_enabled" {
 }
 
 variable "gold_alert_email" {
-  description = "Optional email recipient for Gold Glue failure, Scheduler DLQ, and missing-success alarms. Confirmation is required after apply."
+  description = "Optional email recipient for Gold Glue failure and Scheduler DLQ alarms. Confirmation is required after apply."
   type        = string
   default     = ""
 
@@ -296,17 +296,6 @@ variable "silver_alert_email" {
   validation {
     condition     = var.silver_alert_email == "" || can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.silver_alert_email))
     error_message = "silver_alert_email must be empty or a syntactically valid email address."
-  }
-}
-
-variable "gold_success_heartbeat_hours" {
-  description = "Maximum hours without a successful daily Gold Glue run before alerting."
-  type        = number
-  default     = 26
-
-  validation {
-    condition     = var.gold_success_heartbeat_hours >= 24 && var.gold_success_heartbeat_hours <= 72 && floor(var.gold_success_heartbeat_hours) == var.gold_success_heartbeat_hours
-    error_message = "gold_success_heartbeat_hours must be a whole number between 24 and 72."
   }
 }
 

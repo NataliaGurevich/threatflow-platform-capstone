@@ -45,10 +45,6 @@ output "scheduler_dlq_alarm_name" {
   value = aws_cloudwatch_metric_alarm.scheduler_dlq.alarm_name
 }
 
-output "success_heartbeat_alarm_name" {
-  value = aws_cloudwatch_metric_alarm.success_heartbeat.alarm_name
-}
-
 output "alarm_topic_arn" {
   value = aws_sns_topic.alarms.arn
 }
